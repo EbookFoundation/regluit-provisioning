@@ -1,0 +1,4 @@
+[production]
+regluit-prod ansible_host=m.unglue.it ansible_user=ubuntu
+[ondeck]
+regluit-ondeck ansible_host=ondeck.unglue.it ansible_user=ubuntu
