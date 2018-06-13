@@ -17,7 +17,7 @@ export DJANGO_SETTINGS_MODULE="{{ django_settings_module }}"
 CELERYBEAT="{{ project_path }}/{{ virtualenv_name }}/bin/django-admin.py celerybeat"
 
 # virtualenv to use
-VIRTUALvenv="{{ project_path }}/{{ virtualenv_name }}"
+VIRTUALENV="{{ project_path }}/{{ virtualenv_name }}"
 
 #Full path to the PID file. Default is /var/run/celeryd.pid
 CELERYBEAT_PIDFILE="/var/log/celerybeat/celerybeat.pid"

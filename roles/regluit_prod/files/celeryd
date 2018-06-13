@@ -111,9 +111,9 @@ if [ -f "/etc/default/celeryd" ]; then
     . /etc/default/celeryd
 fi
 
-if [ -f $VIRTUALvenv_ACTIVATE ]; then
-    echo "activating virtualenv $VIRTUALvenv_ACTIVATE"
-    source "$VIRTUALvenv_ACTIVATE"
+if [ -f $VIRTUALENV_ACTIVATE ]; then
+    echo "activating virtualenv $VIRTUALENV_ACTIVATE"
+    source "$VIRTUALENV_ACTIVATE"
 fi
 
 CELERYD_PID_FILE=${CELERYD_PID_FILE:-${CELERYD_PIDFILE:-$DEFAULT_PID_FILE}}

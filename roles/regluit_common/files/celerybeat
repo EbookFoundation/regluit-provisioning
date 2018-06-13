@@ -119,8 +119,8 @@ stop_beat () {
 
 start_beat () {
     echo "Starting celerybeat..."
-    if [ -n "$VIRTUALvenv" ]; then
-        source $VIRTUALvenv/bin/activate
+    if [ -n "$VIRTUALENV" ]; then
+        source $VIRTUALENV/bin/activate
     fi
     $CELERYBEAT $CELERYBEAT_OPTS $DAEMON_OPTS --detach \
                 --pidfile="$CELERYBEAT_PID_FILE"

@@ -5,5 +5,5 @@ CELERYD_PID_FILE="/var/log/celery/%n.pid"
 CELERYD="{{ project_path }}/{{ virtualenv_name }}/bin/django-admin.py celeryd"
 CELERYD_MULTI="{{ project_path }}/{{ virtualenv_name }}/bin/django-admin.py celeryd_multi"
 
-VIRTUALvenv_ACTIVATE="{{ project_path }}/{{ virtualenv_name }}/bin/activate"
+VIRTUALENV_ACTIVATE="{{ project_path }}/{{ virtualenv_name }}/bin/activate"
 export DJANGO_SETTINGS_MODULE="{{ django_settings_module }}"
