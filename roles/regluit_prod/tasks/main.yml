@@ -78,6 +78,25 @@
     - 'common.py'
     - 'host.py'
 
+- name: Copy sysadmin scripts to home directory
+  become: yes
+  template:
+    src: "{{ item }}.j2"
+    dest: "/home/{{ user_name }}/{{ item }}"
+    mode: 0755
+  with_items:
+    - 'setup.sh'
+    - 'dump.sh'
+
+- name: Copy scripts to deploy directory
+  become: yes
+  template:
+    src: "{{ item }}.j2"
+    dest: "{{ project_path }}/deploy/{{ item }}"
+    mode: 0755
+  with_items:
+    - 'emit_notices.sh'
+
 - name: Create django log directory
   become: yes
   file: 
