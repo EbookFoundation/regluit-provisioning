@@ -88,15 +88,6 @@
     - 'setup.sh'
     - 'dump.sh'
 
-- name: Copy scripts to deploy directory
-  become: yes
-  template:
-    src: "{{ item }}.j2"
-    dest: "{{ project_path }}/deploy/{{ item }}"
-    mode: 0755
-  with_items:
-    - 'emit_notices.sh'
-
 - name: Create django log directory
   become: yes
   file: 

@@ -79,7 +79,7 @@
   notify:
     - restart apache
 
-- name: Migrate databse
+- name: Migrate database
   django_manage:
     app_path: "{{ project_path }}"
     command: "migrate --noinput"
