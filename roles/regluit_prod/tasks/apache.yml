@@ -87,11 +87,3 @@
     settings: "{{ django_settings_module }}"
   notify:
     - restart apache
-
-- name: Add unglueit log file to www-data group
-  become: yes
-  file: 
-    path: "/var/log/regluit/unglue.it.log"
-    group: www-data
-  notify:
-    - restart apache
