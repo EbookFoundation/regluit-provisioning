@@ -37,6 +37,7 @@
     mode: 0755
 
 - name: Create WSGI Script
+  become: yes
   template:
     src: prod.wsgi.j2
     dest: "{{ project_path }}/deploy/prod.wsgi"
