@@ -29,6 +29,7 @@
     - 'mysql-client'
     - 'libmysqlclient-dev'
     - 'python-mysqldb'
+    - 'libcairo2'
 
 - name: Install virtualenv
   pip:

@@ -19,6 +19,7 @@
     - 'mysql-client'
     - 'libmysqlclient-dev'
     - 'python-mysqldb'
+    - 'libcairo2'
     - 'postfix'
     - 'libjpeg-dev'
 
