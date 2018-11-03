@@ -38,6 +38,8 @@ common_keys:
   mobigen_url:  "{{ vault_mobigen_url }}"
   mobigen_user_id:  "{{ vault_mobigen_user_id }}"
   mobigen_password:  "{{ vault_mobigen_password }}"
+  ku_email:  "{{ vault_ku_email }}"
+  ku_password:  "{{ vault_ku_password }}"
 
 ### Variables in host.py ### 
 host_keys:
