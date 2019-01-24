@@ -11,7 +11,7 @@ server_name: "m.unglue.it"
 wsgi_home: "/opt/regluit/venv"
 wsgi_python_path: "/opt/regluit/venv/bin/python"
 git_repo: "https://github.com/EbookFoundation/regluit.git"
-git_branch: "master"
+git_branch: "lencrypt"
 
 ### Variables in settings.prod.py ###
 mysql_db_name: "{{ vault_mysql_db_name }}"
