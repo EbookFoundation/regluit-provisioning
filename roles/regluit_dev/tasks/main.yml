@@ -3,23 +3,9 @@
 - name: Install dev dependencies
   become: true
   apt:
-    name: "{{ item }}"
+    name: ['git', 'python-setuptools', 'python-lxml', 'build-essential', 'libssl-dev', 'libffi-dev', 'libxml2-dev', 'libxslt-dev', 'mysql-server', 'mysql-client', 'libmysqlclient-dev', 'python-mysqldb', 'libcairo2']
     update_cache: true
     state: present
-  with_items:
-    - 'git'
-    - 'python-setuptools'
-    - 'python-lxml'
-    - 'build-essential'
-    - 'libssl-dev'
-    - 'libffi-dev'
-    - 'libxml2-dev'
-    - 'libxslt-dev'
-    - 'mysql-server'
-    - 'mysql-client'
-    - 'libmysqlclient-dev'
-    - 'python-mysqldb'
-    - 'libcairo2'
 
 - name: Migrate database
   django_manage:
