@@ -3,7 +3,7 @@
 - name: Make sure account exists and has given contacts. We agree to TOS.
   acme_account:
     account_key_src: private/letsencrypt_account.key
-    acme_directory: https://acme-staging-v02.api.letsencrypt.org/directory
+    acme_directory: https://acme-v02.api.letsencrypt.org/directory
     acme_version: 2
     state: present
     terms_agreed: yes
@@ -14,7 +14,7 @@
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
     account_key_src: private/letsencrypt_account.key
-    acme_directory: https://acme-staging-v02.api.letsencrypt.org/directory
+    acme_directory: https://acme-v02.api.letsencrypt.org/directory
     acme_version: 2
     csr: "private/{{ server_name }}.csr"
     dest: /etc/ssl/certs/server.crt
@@ -49,7 +49,7 @@
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
     account_key_src: private/letsencrypt_account.key
-    acme_directory: https://acme-staging-v02.api.letsencrypt.org/directory
+    acme_directory: https://acme-v02.api.letsencrypt.org/directory
     acme_version: 2
     csr: "private/{{ server_name }}.csr"
     dest: /etc/ssl/certs/server.crt
