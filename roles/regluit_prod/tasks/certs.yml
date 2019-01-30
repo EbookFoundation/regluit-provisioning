@@ -17,7 +17,7 @@
     acme_directory: https://acme-v02.api.letsencrypt.org/directory
     acme_version: 2
     csr: "private/{{ server_name }}.csr"
-    dest: /etc/ssl/certs/server.crt
+    dest: private/server.crt
     fullchain_dest: /etc/ssl/certs/server-fullchain.crt
   delegate_to: 127.0.0.1
   register: acme_challenge
@@ -52,15 +52,31 @@
     acme_directory: https://acme-v02.api.letsencrypt.org/directory
     acme_version: 2
     csr: "private/{{ server_name }}.csr"
-    dest: /etc/ssl/certs/server.crt
-    fullchain_dest: /etc/ssl/certs/server-fullchain.crt"
+    dest: /tmp/server.crt
+    fullchain_dest: /tmp/server.ca-bundle
     data: "{{ acme_challenge }}"
   delegate_to: 127.0.0.1
     
+- name: Copy certs
+  become: yes
+  copy: 
+    src: /tmp/{{ item }}
+    dest: /etc/ssl/certs/{{ item }}.key
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0600
+  with_items:
+    - 'server.crt'
+    - 'server.ca-bundle'
+  notify: 
+    - restart apache
+  tags:
+    - certs
+
 - name: Copy server key
   become: yes
   copy: 
-    src: certs/{{ server_name }}.key
+    src: private/{{ server_name }}.key
     dest: /etc/ssl/private/server.key
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
@@ -69,4 +85,3 @@
     - restart apache
   tags:
     - certs
-
