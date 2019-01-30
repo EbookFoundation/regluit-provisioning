@@ -2,37 +2,65 @@
 
 - name: Make sure account exists and has given contacts. We agree to TOS.
   acme_account:
-    account_key_src: certs/account-key.pem
+    account_key_src: private/letsencrypt_account.key
+    acme_directory: https://acme-staging-v02.api.letsencrypt.org/directory
+    acme_version: 2
     state: present
     terms_agreed: yes
     contact:
-    - mailto: support@ebookfoundation.org
+    - mailto:support@ebookfoundation.org
+  delegate_to: 127.0.0.1
 
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
-    account_key_src: certs/account-key.pem
-    csr: "certs/{{ server_name }}.csr"
+    account_key_src: private/letsencrypt_account.key
+    acme_directory: https://acme-staging-v02.api.letsencrypt.org/directory
+    acme_version: 2
+    csr: "private/{{ server_name }}.csr"
     dest: /etc/ssl/certs/server.crt
     fullchain_dest: /etc/ssl/certs/server-fullchain.crt
+  delegate_to: 127.0.0.1
   register: acme_challenge
 
+
+- name: Create .well-known directory
+  become: yes
+  file: 
+    path: "/var/www/static/.well-known"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: Create acme-challenge directory
+  become: yes
+  file: 
+    path: "/var/www/static/.well-known/acme-challenge"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
 - copy:
-    dest: /var/www/static/lencrypt/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
+    dest: /var/www/static/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
     content: "{{ acme_challenge['challenge_data'][server_name]['http-01']['resource_value'] }}"
-    when: acme_challenge is changed
+  when: acme_challenge is changed
 
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
-    account_key_src: certs/account-key.pem
-    csr: "certs/{{ server_name }}.csr"
+    account_key_src: private/letsencrypt_account.key
+    acme_directory: https://acme-staging-v02.api.letsencrypt.org/directory
+    acme_version: 2
+    csr: "private/{{ server_name }}.csr"
     dest: /etc/ssl/certs/server.crt
     fullchain_dest: /etc/ssl/certs/server-fullchain.crt"
     data: "{{ acme_challenge }}"
+  delegate_to: 127.0.0.1
     
 - name: Copy server key
   become: yes
   copy: 
-    src: certs/m.unglue.it.key
+    src: certs/{{ server_name }}.key
     dest: /etc/ssl/private/server.key
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
