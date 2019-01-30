@@ -16,9 +16,10 @@
     account_key_src: private/letsencrypt_account.key
     acme_directory: https://acme-v02.api.letsencrypt.org/directory
     acme_version: 2
+    select_crypto_backend: openssl
     csr: "private/{{ server_name }}.csr"
-    dest: private/server.crt
-    fullchain_dest: /etc/ssl/certs/server-fullchain.crt
+    dest: tmp/server.crt
+    fullchain_dest: /tmp/server.ca-bundle
   delegate_to: 127.0.0.1
   register: acme_challenge
 
@@ -51,6 +52,7 @@
     account_key_src: private/letsencrypt_account.key
     acme_directory: https://acme-v02.api.letsencrypt.org/directory
     acme_version: 2
+    select_crypto_backend: openssl
     csr: "private/{{ server_name }}.csr"
     dest: /tmp/server.crt
     fullchain_dest: /tmp/server.ca-bundle
