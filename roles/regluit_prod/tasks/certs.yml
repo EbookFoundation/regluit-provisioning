@@ -8,10 +8,22 @@
 #
 # create a code signing request by hand on ansible host with (for example)
 # openssl req -new -sha256 -key private/{{ server_name }}.key -out {{ server_name }}.csr -subj /CN=m.unglue.it
+# 
+# make sure you have private/decrypted/ and private/certs/
+
+
+- name: Decrypt files
+  copy:
+    src: private/{{ item }}
+    dest:  private/decrypted/{{ item }}
+  with_items:
+    - 'letsencrypt_account.key'
+    - '{{ server_name }}.csr'    
+  delegate_to: 127.0.0.1
 
 - name: Make sure account exists and has given contacts. We agree to TOS.
   acme_account:
-    account_key_src: private/letsencrypt_account.key
+    account_key_src: private/decrypted/letsencrypt_account.key
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     state: present
@@ -35,12 +47,12 @@
 
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
-    account_key_src: private/letsencrypt_account.key
+    account_key_src: private/decrypted/letsencrypt_account.key
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     remaining_days: 45
     select_crypto_backend: openssl
-    csr: "csrs/{{ server_name }}.csr"
+    csr: "private/decrypted/{{ server_name }}.csr"
     dest: private/certs/{{ server_name }}.crt
     fullchain_dest: private/certs/{{ server_name }}.ca-bundle
   delegate_to: 127.0.0.1
@@ -72,12 +84,12 @@
 
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
-    account_key_src: private/letsencrypt_account.key
+    account_key_src: private/decrypted/letsencrypt_account.key
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     remaining_days: 45
     select_crypto_backend: openssl
-    csr: "csrs/{{ server_name }}.csr"
+    csr: "private/decrypted/{{ server_name }}.csr"
     dest: private/certs/{{ server_name }}.crt
     fullchain_dest: private/certs/{{ server_name }}.ca-bundle
     data: "{{ acme_challenge }}"
@@ -111,3 +123,12 @@
     - restart apache
   tags:
     - certs
+
+- name:  delete decrypted files
+  file:
+    path: private/decrypted/{{ item }}
+    state: absent
+  with_items:
+    - 'letsencrypt_account.key'
+    - '{{ server_name }}.csr'    
+  delegate_to: 127.0.0.1

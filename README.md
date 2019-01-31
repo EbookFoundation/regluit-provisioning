@@ -4,6 +4,8 @@ The current provisioning setup uses [Ansible](https://www.ansible.com/resources/
 
 ## Pre-requisites 
 Before attempting to deploy, ensure you have done the following:
+1. git checkout https://github.com/EbookFoundation/regluit-provisioning
+1. create `certs` and `decrypted` directories in `private`
 1. Install `ansible` on your local machine
 1. Obtain the `ansible-vault` password and save it to a file
 1. Set the path to the `ansible-vault` file via environment variable e.g. `export NSIBLE_VAULT_PASSWORD_FILE=[path]`
@@ -17,7 +19,7 @@ Before attempting to deploy, ensure you have done the following:
 
 ## Deploy
 Deploying is as simple as running the `setup-prod` ansible playbook.  
-Navigate to the `provisioning/` directory and run the following:  
+Navigate to the `regluit-provisioning/` directory and run the following:  
 ```
 $ ansible-playbook -i hosts setup-prod.yml
 ```   
@@ -27,7 +29,7 @@ If you successfully completed all the pre-requisite steps, the playbook should b
 ## Additional Configuration
 
 ### Variables and Secrets
-The necessary variables are pulled from `provisioning/group_vars/production/vars.yml` which in turn pulls certain secret values from `vault.yml`.  
+The necessary variables are pulled from `regluit-provisioning/group_vars/production/vars.yml` which in turn pulls certain secret values from `vault.yml`.  
 The variables are split into two files to still allow for searching references in playbook tasks.
 To add or view secret values, you must decrypt the file first: `$ ansible-vault decrypt vault.yml` however **always remember to encrypt secret files before pushing to git**.   This is done in a similar manner: `$ ansible-vault encrypt vault.yml`.   
 

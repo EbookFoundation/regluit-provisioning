@@ -12,6 +12,7 @@ wsgi_home: "/opt/regluit/venv"
 wsgi_python_path: "/opt/regluit/venv/bin/python"
 git_repo: "https://github.com/Gluejar/regluit.git"
 git_branch: "production"
+le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
 
 ### Variables in settings.prod.py ###
 mysql_db_name: "{{ vault_mysql_db_name }}"
