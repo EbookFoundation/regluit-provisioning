@@ -51,6 +51,7 @@
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     remaining_days: 45
+    force: no
     select_crypto_backend: openssl
     csr: "private/decrypted/{{ server_name }}.csr"
     dest: private/certs/{{ server_name }}.crt
@@ -77,16 +78,24 @@
     group: "{{ user_name }}"
     mode: 0755
 
-- copy:
+- name: copy main challenge
+  copy:
     dest: /var/www/static/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
     content: "{{ acme_challenge['challenge_data'][server_name]['http-01']['resource_value'] }}"
   when: acme_challenge is changed
+
+- name: copy alt challenge
+  copy:
+    dest: /var/www/static/{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource'] }}
+    content: "{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource_value'] }}"
+  when: acme_challenge is changed and alt_server_name != ''
 
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
     account_key_src: private/decrypted/letsencrypt_account.key
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
+    force: no
     remaining_days: 45
     select_crypto_backend: openssl
     csr: "private/decrypted/{{ server_name }}.csr"
