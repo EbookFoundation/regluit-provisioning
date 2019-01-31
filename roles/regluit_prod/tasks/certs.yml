@@ -1,9 +1,18 @@
 ---
 
+# create account key by hand on ansible host with (for example)
+# openssl genrsa -out private/letsencrypt_account.key 4096
+#
+# create server key by hand on ansible host with (for example)
+# openssl genrsa -out private/{{ server_name }}.key 4096
+#
+# create a code signing request by hand on ansible host with (for example)
+# openssl req -new -sha256 -key private/{{ server_name }}.key -out {{ server_name }}.csr -subj /CN=m.unglue.it
+
 - name: Make sure account exists and has given contacts. We agree to TOS.
   acme_account:
     account_key_src: private/letsencrypt_account.key
-    acme_directory: https://acme-v02.api.letsencrypt.org/directory
+    acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     state: present
     terms_agreed: yes
@@ -11,15 +20,30 @@
     - mailto:support@ebookfoundation.org
   delegate_to: 127.0.0.1
 
+- name: Fetch certs
+  become: yes
+  fetch: 
+    src: /etc/ssl/certs/{{ item }}
+    dest: private/certs/{{ item }}
+    flat: yes
+    fail_on_missing: no
+  with_items:
+    - '{{ server_name }}.crt'
+    - '{{ server_name }}.ca-bundle'
+  tags:
+    - certs
+
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
     account_key_src: private/letsencrypt_account.key
-    acme_directory: https://acme-v02.api.letsencrypt.org/directory
+    acme_directory: "{{ le_endpoint }}"
     acme_version: 2
+    remaining_days: 45
+    force: yes
     select_crypto_backend: openssl
-    csr: "private/{{ server_name }}.csr"
-    dest: tmp/server.crt
-    fullchain_dest: /tmp/server.ca-bundle
+    csr: "csrs/{{ server_name }}.csr"
+    dest: private/certs/{{ server_name }}.crt
+    fullchain_dest: private/certs/{{ server_name }}.ca-bundle
   delegate_to: 127.0.0.1
   register: acme_challenge
 
@@ -50,26 +74,28 @@
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
     account_key_src: private/letsencrypt_account.key
-    acme_directory: https://acme-v02.api.letsencrypt.org/directory
+    acme_directory: "{{ le_endpoint }}"
     acme_version: 2
+    remaining_days: 45
+    force: yes
     select_crypto_backend: openssl
-    csr: "private/{{ server_name }}.csr"
-    dest: /tmp/server.crt
-    fullchain_dest: /tmp/server.ca-bundle
+    csr: "csrs/{{ server_name }}.csr"
+    dest: private/certs/{{ server_name }}.crt
+    fullchain_dest: private/certs/{{ server_name }}.ca-bundle
     data: "{{ acme_challenge }}"
   delegate_to: 127.0.0.1
     
 - name: Copy certs
   become: yes
   copy: 
-    src: /tmp/{{ item }}
-    dest: /etc/ssl/certs/{{ item }}.key
+    src: private/certs/{{ item }}
+    dest: /etc/ssl/certs/{{ item }}
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0600
   with_items:
-    - 'server.crt'
-    - 'server.ca-bundle'
+    - '{{ server_name }}.crt'
+    - '{{ server_name }}.ca-bundle'
   notify: 
     - restart apache
   tags:
