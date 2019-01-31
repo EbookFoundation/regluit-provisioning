@@ -39,7 +39,6 @@
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     remaining_days: 45
-    force: yes
     select_crypto_backend: openssl
     csr: "csrs/{{ server_name }}.csr"
     dest: private/certs/{{ server_name }}.crt
@@ -77,7 +76,6 @@
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     remaining_days: 45
-    force: yes
     select_crypto_backend: openssl
     csr: "csrs/{{ server_name }}.csr"
     dest: private/certs/{{ server_name }}.crt
