@@ -2,26 +2,9 @@
 - name: Install prod dependencies
   become: true
   apt:
-    name: "{{ item }}"
+    name: ['git', 'python-setuptools', 'python-lxml', 'python-dev', 'python-virtualenv', 'build-essential', 'libssl-dev', 'libffi-dev', 'libxml2-dev', 'libxslt-dev', 'mysql-client', 'libmysqlclient-dev', 'python-mysqldb', 'libcairo2', 'postfix', 'libjpeg-dev']
     update_cache: true
     state: present
-  with_items:
-    - 'git'
-    - 'python-setuptools'
-    - 'python-lxml'
-    - 'python-dev'
-    - 'python-virtualenv'
-    - 'build-essential'
-    - 'libssl-dev'
-    - 'libffi-dev'
-    - 'libxml2-dev'
-    - 'libxslt-dev'
-    - 'mysql-client'
-    - 'libmysqlclient-dev'
-    - 'python-mysqldb'
-    - 'libcairo2'
-    - 'postfix'
-    - 'libjpeg-dev'
 
 - name: Create project directory
   become: true
@@ -115,11 +98,11 @@
 # - name: Run mysql tasks
 #   import_tasks: mysql.yml
 
-- name: Run cert tasks
-  import_tasks: certs.yml
-
 - name: Run apache tasks
   import_tasks: apache.yml
+
+- name: Run cert tasks
+  import_tasks: certs.yml
 
 - name: Run celery tasks
   import_tasks: celery.yml
