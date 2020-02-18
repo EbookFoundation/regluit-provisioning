@@ -1,8 +1,129 @@
 ---
+
+# create account key by hand on ansible host with (for example)
+# openssl genrsa -out private/letsencrypt_account.key 4096
+#
+# create server key by hand on ansible host with (for example)
+# openssl genrsa -out private/{{ server_name }}.key 4096
+#
+# create a code signing request by hand on ansible host with (for example)
+# openssl req -new -sha256 -key private/{{ server_name }}.key -out {{ server_name }}.csr -subj /CN=m.unglue.it
+# 
+# make sure you have private/decrypted/ and private/certs/
+
+
+- name: Decrypt files
+  copy:
+    src: private/{{ item }}
+    dest:  private/decrypted/{{ item }}
+  with_items:
+    - 'letsencrypt_account.key'
+    - '{{ server_name }}.csr'    
+  delegate_to: 127.0.0.1
+
+- name: Make sure account exists and has given contacts. We agree to TOS.
+  acme_account:
+    account_key_src: private/decrypted/letsencrypt_account.key
+    acme_directory: "{{ le_endpoint }}"
+    acme_version: 2
+    state: present
+    terms_agreed: yes
+    contact:
+    - mailto:support@ebookfoundation.org
+  delegate_to: 127.0.0.1
+
+- name: Fetch certs
+  become: yes
+  fetch: 
+    src: /etc/ssl/certs/{{ item }}
+    dest: private/certs/{{ item }}
+    flat: yes
+    fail_on_missing: no
+  with_items:
+    - '{{ server_name }}.crt'
+    - '{{ server_name }}.ca-bundle'
+  tags:
+    - certs
+
+- name: Create a challenge for server_name using a account key file.
+  acme_certificate:
+    account_key_src: private/decrypted/letsencrypt_account.key
+    acme_directory: "{{ le_endpoint }}"
+    acme_version: 2
+    remaining_days: 45
+    force: no
+    select_crypto_backend: openssl
+    csr: "private/decrypted/{{ server_name }}.csr"
+    dest: private/certs/{{ server_name }}.crt
+    fullchain_dest: private/certs/{{ server_name }}.ca-bundle
+  delegate_to: 127.0.0.1
+  register: acme_challenge
+
+
+- name: Create .well-known directory
+  become: yes
+  file: 
+    path: "/var/www/static/.well-known"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: Create acme-challenge directory
+  become: yes
+  file: 
+    path: "/var/www/static/.well-known/acme-challenge"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: copy main challenge
+  copy:
+    dest: /var/www/static/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
+    content: "{{ acme_challenge['challenge_data'][server_name]['http-01']['resource_value'] }}"
+  when: acme_challenge is changed
+
+- name: copy alt challenge
+  copy:
+    dest: /var/www/static/{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource'] }}
+    content: "{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource_value'] }}"
+  when: acme_challenge is changed and alt_server_name != ''
+
+- name: Create a challenge for server_name using a account key file.
+  acme_certificate:
+    account_key_src: private/decrypted/letsencrypt_account.key
+    acme_directory: "{{ le_endpoint }}"
+    acme_version: 2
+    force: no
+    remaining_days: 45
+    select_crypto_backend: openssl
+    csr: "private/decrypted/{{ server_name }}.csr"
+    dest: private/certs/{{ server_name }}.crt
+    fullchain_dest: private/certs/{{ server_name }}.ca-bundle
+    data: "{{ acme_challenge }}"
+  delegate_to: 127.0.0.1
+    
+- name: Copy certs
+  become: yes
+  copy: 
+    src: private/certs/{{ item }}
+    dest: /etc/ssl/certs/{{ item }}
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0600
+  with_items:
+    - '{{ server_name }}.crt'
+    - '{{ server_name }}.ca-bundle'
+  notify: 
+    - restart apache
+  tags:
+    - certs
+
 - name: Copy server key
   become: yes
   copy: 
-    src: certs/server.key
+    src: private/{{ server_name }}.key
     dest: /etc/ssl/private/server.key
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
@@ -12,28 +133,11 @@
   tags:
     - certs
 
-- name: Copy STAR_unglue_it.crt 
-  become: yes
-  copy: 
-    src: certs/STAR_unglue_it.crt
-    dest: /etc/ssl/certs/server.crt
-    owner: "{{ user_name }}"
-    group: "{{ user_name }}"
-    mode: 0644
-  notify: 
-    - restart apache
-  tags:
-    - certs
-
-- name: Copy STAR_unglue_it.ca-bundle 
-  become: yes
-  copy: 
-    src: certs/STAR_unglue_it.ca-bundle
-    dest: /etc/ssl/certs/STAR_unglue_it.ca-bundle
-    owner: "{{ user_name }}"
-    group: "{{ user_name }}"
-    mode: 0600
-  notify: 
-    - restart apache
-  tags: 
-    - certs
+- name:  delete decrypted files
+  file:
+    path: private/decrypted/{{ item }}
+    state: absent
+  with_items:
+    - 'letsencrypt_account.key'
+    - '{{ server_name }}.csr'    
+  delegate_to: 127.0.0.1

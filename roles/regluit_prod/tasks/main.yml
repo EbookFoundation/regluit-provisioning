@@ -98,11 +98,11 @@
 # - name: Run mysql tasks
 #   import_tasks: mysql.yml
 
-- name: Run cert tasks
-  import_tasks: certs.yml
-
 - name: Run apache tasks
   import_tasks: apache.yml
+
+- name: Run cert tasks
+  import_tasks: certs.yml
 
 - name: Run celery tasks
   import_tasks: celery.yml
