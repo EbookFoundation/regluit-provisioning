@@ -40,6 +40,8 @@ common_keys:
   mobigen_password:  "{{ vault_mobigen_password }}"
   ku_email:  "{{ vault_ku_email }}"
   ku_password:  "{{ vault_ku_password }}"
+  stripe_pk:  "{{ vault_stripe_pk }}"
+  stripe_sk:  "{{ vault_stripe_sk }}"
 
 ### Variables in host.py ### 
 host_keys:
