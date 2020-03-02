@@ -2,7 +2,7 @@
 - name: Install apache
   become: yes
   apt:
-    name: ['apache2', 'libapache2-mod-wsgi', 'cronolog']
+    name: ['apache2', 'libapache2-mod-wsgi-py3', 'cronolog']
     state: present
 
 - name: Ensure apache is running and enabled

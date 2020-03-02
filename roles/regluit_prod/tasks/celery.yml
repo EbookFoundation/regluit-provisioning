@@ -4,6 +4,8 @@
   user: 
     create_home: no
     name: "celery"
+    groups:
+      - www-data
   tags: 
     - celery
 
@@ -57,11 +59,9 @@
     - celery
 
 - name: Start celeryd
-  django_manage:
-    app_path: "{{ project_path }}"
-    command: "celeryd_multi restart w1"
-    virtualenv: "{{ project_path }}/venv"
-    settings: "{{ django_settings_module }}"
+  become: yes
+  command: /etc/init.d/celeryd start
 
 - name: Start celerybeat
+  become: yes
   command: /etc/init.d/celerybeat start

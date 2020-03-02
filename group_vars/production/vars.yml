@@ -9,10 +9,11 @@ virtualenv_name: "venv"
 user_name: "ubuntu"
 server_name: "unglue.it"
 wsgi_home: "/opt/regluit/venv"
-wsgi_python_path: "/opt/regluit/venv/bin/python"
+wsgi_python_path: "/opt/regluit/venv/bin/python3"
 git_repo: "https://github.com/Gluejar/regluit.git"
 git_branch: "production"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
+#le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
 alt_server_name: "www.unglue.it"
 
 ### Variables in settings.prod.py ###
@@ -22,12 +23,8 @@ mysql_db_pass: "{{ vault_mysql_db_pass }}"
 mysql_db_host: "{{ vault_mysql_db_host }}"
 mysql_db_port: ""
 email_host: "{{ vault_email_host }}"
-email_port: 465
+email_port: 587
 default_from_email: "notices@gluejar.com"
-broker_transport: "redis"
-broker_host: "127.0.0.1"
-broker_port: 6379
-broker_vhost: "0"
 
 ### Variables in common.py ###
 common_keys:

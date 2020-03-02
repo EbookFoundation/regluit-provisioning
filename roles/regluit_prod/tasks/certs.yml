@@ -47,15 +47,15 @@
 
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
-    account_key_src: private/decrypted/letsencrypt_account.key
+    account_key_src: "private/decrypted/letsencrypt_account.key"
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     remaining_days: 45
-    force: no
+    force: yes  # change this to yes if you have fake certs
     select_crypto_backend: openssl
     csr: "private/decrypted/{{ server_name }}.csr"
-    dest: private/certs/{{ server_name }}.crt
-    fullchain_dest: private/certs/{{ server_name }}.ca-bundle
+    dest: "private/certs/{{ server_name }}.crt"
+    fullchain_dest: "private/certs/{{ server_name }}.ca-bundle"
   delegate_to: 127.0.0.1
   register: acme_challenge
 
@@ -78,6 +78,10 @@
     group: "{{ user_name }}"
     mode: 0755
 
+- name: debug
+  debug:
+    msg: "{{ acme_challenge }}"
+  
 - name: copy main challenge
   copy:
     dest: /var/www/static/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
@@ -99,16 +103,16 @@
     remaining_days: 45
     select_crypto_backend: openssl
     csr: "private/decrypted/{{ server_name }}.csr"
-    dest: private/certs/{{ server_name }}.crt
-    fullchain_dest: private/certs/{{ server_name }}.ca-bundle
+    dest: "private/certs/{{ server_name }}.crt"
+    fullchain_dest: "private/certs/{{ server_name }}.ca-bundle"
     data: "{{ acme_challenge }}"
   delegate_to: 127.0.0.1
     
 - name: Copy certs
   become: yes
   copy: 
-    src: private/certs/{{ item }}
-    dest: /etc/ssl/certs/{{ item }}
+    src: "private/certs/{{ item }}"
+    dest: "/etc/ssl/certs/{{ item }}"
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0600
@@ -123,8 +127,8 @@
 - name: Copy server key
   become: yes
   copy: 
-    src: private/{{ server_name }}.key
-    dest: /etc/ssl/private/server.key
+    src: "private/{{ server_name }}.key"
+    dest: "/etc/ssl/private/server.key"
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0600
@@ -135,8 +139,8 @@
 
 - name:  delete decrypted files
   file:
-    path: private/decrypted/{{ item }}
-    state: absent
+    path: "private/decrypted/{{ item }}"
+    state: file
   with_items:
     - 'letsencrypt_account.key'
     - '{{ server_name }}.csr'    

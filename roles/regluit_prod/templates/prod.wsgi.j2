@@ -3,7 +3,7 @@
 import os
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "regluit.settings.prod")
-os.environ['CELERY_LOADER'] = 'django'
+#os.environ['CELERY_LOADER'] = 'django'
 
 {% for key in host_keys %}
 os.environ['{{ key|upper }}'] = '{{ host_keys[key] }}'
