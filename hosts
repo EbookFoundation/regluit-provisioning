@@ -1,6 +1,6 @@
 [dev]
-regluit-dev ansible_host=m.unglue.it ansible_user=ubuntu
+regluit-dev ansible_host=m.unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
 [ondeck]
-regluit-ondeck ansible_host=ondeck.unglue.it ansible_user=ubuntu
+regluit-ondeck ansible_host=ondeck.unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
 [production]
-regluit-prod ansible_host=unglue.it ansible_user=ubuntu
+regluit-prod ansible_host=unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3

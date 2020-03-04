@@ -1,56 +1,114 @@
 ---
 
+
+
 - name: Install dev dependencies
   become: true
   apt:
-    name: ['git', 'python-setuptools', 'python-lxml', 'build-essential', 'libssl-dev', 'libffi-dev', 'libxml2-dev', 'libxslt-dev', 'mysql-server', 'mysql-client', 'libmysqlclient-dev', 'python-mysqldb', 'libcairo2']
+    name: ['git',  'python-setuptools',  'python-lxml',  'build-essential',  'libssl-dev',  'libffi-dev',  'libxml2-dev',  'libxslt-dev',  'mysql-server',  'mysql-client',  'libmysqlclient-dev',  'python3-mysqldb',  'libcairo2']
     update_cache: true
     state: present
 
-- name: Migrate database
-  django_manage:
-    app_path: "{{ project_path }}"
-    command: "migrate --noinput"
-    virtualenv: "{{ project_path }}/venv"
-    settings: "{{ django_settings_module }}"
+- name: Create project directory
+  become: true
+  file: 
+    path: "{{ project_path }}"
+    state: directory
+    owner: "{{ user_name }}"
+    mode: 0755
+  
+- name: Checkout regluit repo
+  git:
+    accept_hostkey: yes
+    force: yes
+    repo: "{{ git_repo }}"
+    dest: "{{ project_path }}"
+    version: "{{ git_branch }}"
 
-- name: Import fixtures
-  django_manage:
-    app_path: "{{ project_path }}"
-    command: "loaddata"
+- name: Install python packages to virtualenv
+  pip:
+    requirements: "{{ project_path }}/requirements.txt"
+    state: latest
     virtualenv: "{{ project_path }}/venv"
-    settings: "{{ django_settings_module }}"
-    fixtures: "core/fixtures/initial_data.json core/fixtures/bookloader.json"
 
-- name: Start Celery Worker
-  django_manage:
-    app_path: "{{ project_path }}"
-    command: "celery worker --detach --loglevel=INFO"
-    virtualenv: "{{ project_path }}/venv"
-    settings: "{{ django_settings_module }}"
-
-- name: Start Celery Beat
-  django_manage:
-    app_path: "{{ project_path }}"
-    command: "celery beat --detach --loglevel=INFO"
-    virtualenv: "{{ project_path }}/venv"
-    settings: "{{ django_settings_module }}"
-
-- name: Copy activation script
+- name: Add project to PYTHONPATH of virtualenv
   template:
-    src: "activate_venv.sh.j2"
-    dest: "/home/{{ ansible_user }}/activate_venv.sh"
-    owner: "{{ ansible_user }}"
-    mode: "u=rx,g=rx,o=rwx"
+    src: "{{ item }}.j2"
+    dest: "{{ project_path }}/venv/lib/python3.6/site-packages/{{ item }}"
+  with_items:
+    - 'regluit.pth'
+    - 'opt.pth'
 
-- name: Source activation script in bash profile
-  blockinfile:
-    path: "/home/{{ ansible_user }}/.profile"
-    block: |
-      if [ -f ~/activate_venv.sh ]; then
-        source ~/activate_venv.sh
-      fi
-    marker: "# {mark} SOURCE REGLUIT ACTIVATION SCRIPT ON LOGIN"
+- name: Create keys directory
+  file:
+    path: "{{ project_path}}/settings/keys"
+    state: directory
+    owner: "{{ user_name }}"
+    mode: 0755
 
-- debug:
-    msg: "Successfully provisioned regluit development environment."
+- name: Copy keys files
+  copy:
+    src: "{{ project_path }}/settings/dummy/__init__.py"
+    dest: "{{ project_path }}/settings/keys/__init__.py"
+    remote_src: yes
+
+- name: Copy django settings template
+  template:
+    src: prod.py.j2
+    dest: "{{ project_path }}/settings/prod.py"
+
+- name: Copy key templates to keys directory
+  template:
+    src: "{{ item }}.j2"
+    dest: "{{ project_path }}/settings/keys/{{ item }}"
+  with_items:
+    - 'common.py'
+    - 'host.py'
+
+- name: Copy sysadmin scripts to home directory
+  become: yes
+  template:
+    src: "{{ item }}.j2"
+    dest: "/home/{{ user_name }}/{{ item }}"
+    mode: 0755
+  with_items:
+    - 'setup.sh'
+    - 'dump.sh'
+
+- name: Create django log directory
+  become: yes
+  file: 
+    path: "/var/log/regluit"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "www-data"
+    mode: 02775
+
+- name: Open ports on firewall
+  become: yes
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  with_items:
+    - '22'
+    - '80'
+    - '443'
+
+- name: Run redis tasks
+  import_tasks: redis.yml
+
+# - name: Run mysql tasks
+#   import_tasks: mysql.yml
+
+- name: Run apache tasks
+  import_tasks: apache.yml
+
+- name: Run cert tasks
+  import_tasks: certs.yml
+
+- name: Run celery tasks
+  import_tasks: celery.yml
+
+
+

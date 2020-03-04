@@ -10,10 +10,7 @@ mysql_db_host: "localhost"
 mysql_db_port: 3306
 
 # Task Broker
-broker_transport: "redis"
-broker_host: "localhost"
-broker_port: 6379
-broker_vhost: "0"
+broker_url: "redis://localhost:6379//"
 
 # Common.py defaults
 boxstream_api_key: "012345678901234567890123456789"
