@@ -60,8 +60,8 @@
 
 - name: Start celeryd
   become: yes
-  command: /etc/init.d/celeryd start
+  command: /etc/init.d/celeryd restart
 
 - name: Start celerybeat
   become: yes
-  command: /etc/init.d/celerybeat start
+  command: /etc/init.d/celerybeat restart

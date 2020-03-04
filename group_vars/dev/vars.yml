@@ -15,6 +15,8 @@ git_branch: "py3"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 #le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
 alt_server_name: ""
+deploy_type: 'dev' # change to 'test' to activate send_test_email
+
 
 
 ### Variables in settings.prod.py ###
