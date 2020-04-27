@@ -2,7 +2,7 @@
 - name: Install prod dependencies
   become: true
   apt:
-    name: ['git', 'python-setuptools', 'python-lxml', 'python-dev', 'python-virtualenv', 'build-essential', 'libssl-dev', 'libffi-dev', 'libxml2-dev', 'libxslt-dev', 'mysql-client', 'libmysqlclient-dev', 'libcairo2', 'postfix', 'libjpeg-dev']
+    name: ['git', 'python-setuptools', 'libxml2-dev', 'libxslt1-dev',  'python3-lxml', 'python-dev', 'python-virtualenv', 'build-essential', 'libssl-dev', 'libffi-dev','mysql-client', 'libmysqlclient-dev', 'libcairo2', 'postfix', 'libjpeg-dev']
     update_cache: true
     state: present
 

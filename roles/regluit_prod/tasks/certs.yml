@@ -86,13 +86,13 @@
   copy:
     dest: /var/www/static/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
     content: "{{ acme_challenge['challenge_data'][server_name]['http-01']['resource_value'] }}"
-  when: acme_challenge is changed
+  when: acme_challenge is changed and server_name in acme_challenge['challenge_data']
 
 - name: copy alt challenge
   copy:
     dest: /var/www/static/{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource'] }}
     content: "{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource_value'] }}"
-  when: acme_challenge is changed and alt_server_name != ''
+  when: acme_challenge is changed and alt_server_name != '' and alt_server_name in acme_challenge['challenge_data']
 
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:

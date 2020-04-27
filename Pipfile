@@ -6,8 +6,7 @@ verify_ssl = true
 [dev-packages]
 
 [packages]
-ansible = "*"
-python3-apt = "*"
+ansible = "==2.9.6"
 
 [requires]
 python_version = "3.6"
