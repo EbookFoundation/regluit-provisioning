@@ -27,7 +27,7 @@ SSLCertificateFile    /etc/ssl/certs/{{ server_name }}.crt
 SSLCertificateKeyFile /etc/ssl/private/server.key
 SSLCertificateChainFile /etc/ssl/certs/{{ server_name }}.ca-bundle
 
-WSGIDaemonProcess regluit processes=4 threads=4 python-eggs=/tmp/regluit-python-eggs
+WSGIDaemonProcess regluit processes=4 threads=8 python-eggs=/tmp/regluit-python-eggs
 WSGIScriptAlias / /opt/regluit/deploy/prod.wsgi
 
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
