@@ -100,6 +100,7 @@ STATIC_ROOT = '/var/www/static'
 
 # start out with nothing scheduled
 CELERYBEAT_SCHEDULE = {}
+CELERY_LOG_DIR = '/var/log/celery'
 
 # decide which of the period tasks to add to the schedule
 if '{{ deploy_type }}' == 'test':
@@ -113,6 +114,9 @@ elif '{{ deploy_type }}' == 'prod':
     CELERYBEAT_SCHEDULE['notify_expiring_accounts'] = NOTIFY_EXPIRING_ACCOUNTS
     CELERYBEAT_SCHEDULE['refresh_acqs'] = REFRESH_ACQS_JOB
     CELERYBEAT_SCHEDULE['refresh_acqs'] = NOTIFY_UNCLAIMED_GIFTS
+    CELERYBEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
+    CELERYBEAT_SCHEDULE['periodic_cleanup'] = PERIODIC_CLEANUP
+    CELERYBEAT_SCHEDULE['emit_notices'] = EMIT_NOTICES
 
 
 ACCEPT_CONTENT = ['pickle', 'json', 'msgpack', 'yaml']
