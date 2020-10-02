@@ -53,8 +53,6 @@ host_keys:
   email_host_password:  '{{ vault_email_host_password }}'
   social_auth_twitter_key:  '{{ vault_social_auth_twitter_key }}'
   social_auth_twitter_secret:  '{{ vault_social_auth_twitter_secret }}'
-  social_auth_facebook_key: '{{ vault_social_auth_facebook_key }}'
-  social_auth_facebook_secret:  '{{ vault_social_auth_facebook_secret }}'
   social_auth_google_oauth2_key: '{{ vault_social_auth_google_oauth2_key }}'
   social_auth_google_oauth2_secret: '{{ vault_social_auth_google_oauth2_secret }}'
   aws_access_key_id: '{{ vault_aws_access_key_id }}'
