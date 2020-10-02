@@ -44,6 +44,7 @@ Header always add Strict-Transport-Security "max-age=15768000"
 <Directory /opt/regluit/deploy>
   <Files prod.wsgi>
     Require all granted
+    Require expr %{HTTP_HOST} -strcmatch "*{{ server_name }}"
   </Files>
 </Directory>
 
