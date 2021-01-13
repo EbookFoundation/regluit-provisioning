@@ -49,8 +49,6 @@ common_keys:
 host_keys:
   secret_key: '{{ vault_secret_key }}'
   google_books_api_key: "{{ vault_google_books_api_key }}"
-  goodreads_api_key:  "{{ vault_goodreads_api_key }}"
-  goodreads_api_secret:  "{{ vault_goodreads_api_secret }}"
   email_host_user: '{{ vault_email_host_user }}'
   email_host_password:  '{{ vault_email_host_password }}'
   social_auth_twitter_key:  '{{ vault_social_auth_twitter_key }}'
