@@ -78,6 +78,24 @@
     group: "{{ user_name }}"
     mode: 0755
 
+- name: Create .well-known directory for fresh server
+  become: yes
+  file: 
+    path: "/var/www/html/.well-known"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: Create acme-challenge directory for fresh server
+  become: yes
+  file: 
+    path: "/var/www/html/.well-known/acme-challenge"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
 - name: debug
   debug:
     msg: "{{ acme_challenge }}"
@@ -91,6 +109,18 @@
 - name: copy alt challenge
   copy:
     dest: /var/www/static/{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource'] }}
+    content: "{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource_value'] }}"
+  when: acme_challenge is changed and alt_server_name != '' and alt_server_name in acme_challenge['challenge_data']
+
+- name: copy main challenge for fresh server
+  copy:
+    dest: /var/www/html/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
+    content: "{{ acme_challenge['challenge_data'][server_name]['http-01']['resource_value'] }}"
+  when: acme_challenge is changed and server_name in acme_challenge['challenge_data']
+
+- name: copy alt challenge for fresh server
+  copy:
+    dest: /var/www/html/{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource'] }}
     content: "{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource_value'] }}"
   when: acme_challenge is changed and alt_server_name != '' and alt_server_name in acme_challenge['challenge_data']
 
