@@ -5,7 +5,7 @@
 CELERYBEAT_CHDIR="{{ project_path }}/"
 
 # Name of the projects settings module.
-export DJANGO_SETTINGS_MODULE="{{ django_settings_module }}"
+DJANGO_SETTINGS_MODULE="{{ django_settings_module }}"
 
 # Path to celery
 CELERY_BIN="{{ project_path }}/{{ virtualenv_name }}/bin/celery"
