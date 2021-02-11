@@ -36,6 +36,15 @@
     - 'regluit.pth'
     - 'opt.pth'
 
+- name: Create lock directory
+  file:
+    path: "{{ project_path}}/.lock"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "www-data"
+    mode: 0775
+
+
 - name: Create keys directory
   file:
     path: "{{ project_path}}/settings/keys"
