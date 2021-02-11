@@ -1,5 +1,5 @@
 - hosts: regluit-dev
-  gather_facts: true
+  gather_facts: false
   tasks:
     # Need to install python3.6 and pip first so Ansible will function
   - name: Install python3.6 and pip for dev

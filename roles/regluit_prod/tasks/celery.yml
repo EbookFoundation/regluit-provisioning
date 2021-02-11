@@ -50,10 +50,12 @@
   ansible.builtin.service:
     name: celeryd
     daemon_reload: yes
+    enabled: yes
     state: reloaded
 
 - name: Start celerybeat
   become: yes
   ansible.builtin.service:
     name: celerybeat
+    enabled: yes
     state: restarted

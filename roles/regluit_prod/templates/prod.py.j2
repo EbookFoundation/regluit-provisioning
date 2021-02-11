@@ -105,6 +105,7 @@ CELERY_LOG_DIR = '/var/log/celery'
 # decide which of the period tasks to add to the schedule
 if '{{ deploy_type }}' == 'test':
     CELERYBEAT_SCHEDULE['send_test_email'] = SEND_TEST_EMAIL_JOB
+    CELERYBEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE_TEST
 elif '{{ deploy_type }}' == 'prod':
     # update the statuses of campaigns
     CELERYBEAT_SCHEDULE['update_active_campaign_statuses'] = UPDATE_ACTIVE_CAMPAIGN_STATUSES
@@ -140,3 +141,5 @@ try:
     from regluit.settings.local import *
 except ImportError:
     pass
+
+NOTIFICATION_LOCK_FILE = '/opt/regluit/.lock/send_notices'
