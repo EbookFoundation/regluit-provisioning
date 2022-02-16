@@ -118,6 +118,7 @@ elif '{{ deploy_type }}' == 'prod':
     CELERYBEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
     CELERYBEAT_SCHEDULE['periodic_cleanup'] = PERIODIC_CLEANUP
     CELERYBEAT_SCHEDULE['emit_notices'] = EMIT_NOTICES
+    CELERYBEAT_SCHEDULE['feature_new_work'] = FEATURE_NEW_WORK
 
 
 ACCEPT_CONTENT = ['pickle', 'json', 'msgpack', 'yaml']
