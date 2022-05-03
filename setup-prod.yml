@@ -1,10 +1,10 @@
 - hosts: regluit-prod
   gather_facts: false
   tasks:
-    # Need to install python3.6 and pip first so Ansible will function
-  - name: Install python3.6 and pip for dev
+    # Need to install python3.7 and pip first so Ansible will function
+  - name: Install python3.7 and pip for dev
     become: true
-    raw: bash -c "apt -qqy update && apt install -y python3.6  python3-pip python3-apt"
+    raw: bash -c "apt -qqy update && apt install -y python3.7  python3-pip python3-apt"
     register: output
     changed_when: output.stdout != ""
 

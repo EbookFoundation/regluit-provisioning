@@ -34,7 +34,7 @@
 - name: Add project to PYTHONPATH of virtualenv
   template:
     src: "{{ item }}.j2"
-    dest: "{{ project_path }}/venv/lib/python3.6/site-packages/{{ item }}"
+    dest: "{{ project_path }}/venv/lib/python3.7/site-packages/{{ item }}"
   with_items:
     - 'regluit.pth'
     - 'opt.pth'
