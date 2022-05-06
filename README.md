@@ -8,7 +8,7 @@ Before attempting to deploy, ensure you have done the following:
 1. create `certs` and `decrypted` directories in `private`
 1. Install `ansible` on your local machine
 1. Obtain the `ansible-vault` password and save it to a file
-1. Set the path to the `ansible-vault` file via environment variable e.g. `export NSIBLE_VAULT_PASSWORD_FILE=[path]`
+1. Set the path to the `ansible-vault` file via environment variable e.g. `export ANSIBLE_VAULT_PASSWORD_FILE=[path]`
 1. Create/obtain the secret key needed to SSH into the server
 1. (optional) Add the secret key to your ssh agent 
     ```
