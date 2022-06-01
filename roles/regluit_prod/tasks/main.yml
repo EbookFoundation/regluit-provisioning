@@ -81,6 +81,16 @@
   with_items:
     - 'setup.sh'
     - 'dump.sh'
+    - '.my.cnf'
+
+- name: Copy mysql config file
+  become: yes
+  template:
+    src: "{{ item }}.j2"
+    dest: "/home/{{ user_name }}/{{ item }}"
+    mode: 0600
+  with_items:
+    - '.my.cnf'
 
 - name: Create django log directory
   become: yes
