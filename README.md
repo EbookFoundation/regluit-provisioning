@@ -46,3 +46,8 @@ In the future, the static inventory file may be replaced with a dynamic inventor
 One important aspect of the `hosts` file is that it defines the groups which a host or hosts are a part of.   
 Currently, there is  one prod host called `regluit-prod` which is a member of the `production` group, and another called `regluit-ondeck` in the `ondeck` group intended to be a build target that can be swapped in to production.
 These designations are important, as the `setup-prod` playbook specifically targets the `regluit-prod` host, and only that host will inherit the variables in `group_vars/production/`.   
+
+## Notes
+
+`sudo apt-get install mysql-client-8.0=8.0.19-0ubuntu5`
+`sudo apt-get install mysql-client-core-8.0=8.0.19-0ubuntu5'

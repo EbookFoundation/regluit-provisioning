@@ -24,4 +24,4 @@ CELERYBEAT_LOG_LEVEL="INFO"
 
 CELERY_APP="regluit"
 
-CELERYBEAT_OPTS="--schedule=/var/run/celery/celerybeat-schedule"
+CELERYBEAT_OPTS="--schedule=/var/run/celery/celerybeat-schedule --concurrency=2"
