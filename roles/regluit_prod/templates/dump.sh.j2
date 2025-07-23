@@ -1,12 +1,10 @@
 #!/bin/bash
-PASSWORD={{ mysql_db_pass }}
 HOST={{ mysql_db_host }}
 USER={{ mysql_db_user }}
 DATABASE={{ mysql_db_name }}
 DB_FILE=unglue.it.sql
 
 echo "Dump all"
-mysqldump --hex-blob --host=${HOST} --user=${USER} --password=${PASSWORD} --single-transaction ${DATABASE} > ${DB_FILE}
-
+mysqldump --hex-blob --host=${HOST} --user=${USER}  --single-transaction --no-tablespaces --column-statistics=0 --set-gtid-purged=OFF ${DATABASE} > ${DB_FILE}
 echo "gzip the file"
 gzip -f ${DB_FILE}

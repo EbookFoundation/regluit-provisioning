@@ -25,7 +25,7 @@ mysql_db_host: "{{ vault_mysql_db_host }}"
 mysql_db_port: ""
 email_host: "{{ vault_email_host }}"
 email_port: 587
-default_from_email: "notices@gluejar.com"
+default_from_email: "unglueit@ebookfoundation.org"
 
 ### Variables in common.py ###
 common_keys:
@@ -42,6 +42,7 @@ common_keys:
   ku_password:  "{{ vault_ku_password }}"
   stripe_pk:  "{{ vault_stripe_pk }}"
   stripe_sk:  "{{ vault_stripe_sk }}"
+  librarything_key: "{{ vault_librarything_key }}"
 
 ### Variables in host.py ### 
 host_keys:
@@ -49,10 +50,10 @@ host_keys:
   google_books_api_key: "{{ vault_google_books_api_key }}"
   email_host_user: '{{ vault_email_host_user }}'
   email_host_password:  '{{ vault_email_host_password }}'
-  social_auth_twitter_key:  '{{ vault_social_auth_twitter_key }}'
-  social_auth_twitter_secret:  '{{ vault_social_auth_twitter_secret }}'
   social_auth_google_oauth2_key: '{{ vault_social_auth_google_oauth2_key }}'
   social_auth_google_oauth2_secret: '{{ vault_social_auth_google_oauth2_secret }}'
   aws_access_key_id: '{{ vault_aws_access_key_id }}'
   aws_secret_access_key: '{{ vault_aws_secret_access_key }}'
   aws_storage_bucket_name:  '{{ vault_aws_storage_bucket_name }}'
+  cf_turnstile_site_key:  '{{ vault_cf_turnstile_site_key }}'
+  cf_turnstile_secret_key:  '{{ vault_cf_turnstile_secret_key }}'

@@ -20,6 +20,16 @@
   tags:
     - celery
 
+- name: Create celery log directory
+  become: yes
+  file: 
+    path: "/var/log/celery"
+    state: directory
+    owner: "celery"
+    group: "www-data"
+    mode: 02775
+
+
 
 - name: Copy celery config files
   become: yes

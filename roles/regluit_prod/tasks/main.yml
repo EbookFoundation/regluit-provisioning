@@ -2,7 +2,7 @@
 - name: Install prod dependencies
   become: true
   apt:
-    name: ['git', 'python-setuptools', 'libxml2-dev', 'libxslt1-dev',  'python3-lxml', 'python-dev', 'python-virtualenv', 'build-essential', 'libssl-dev', 'libffi-dev','mysql-client', 'libmysqlclient-dev', 'libcairo2', 'postfix', 'libjpeg-dev']
+    name: ['git', 'python-setuptools', 'libxml2-dev', 'libxslt1-dev',  'python3-lxml', 'python-dev', 'python3-virtualenv', 'build-essential', 'libssl-dev', 'libffi-dev','mysql-client', 'libmysqlclient-dev', 'libcairo2', 'postfix', 'libjpeg-dev']
     update_cache: true
     state: present
 
@@ -21,7 +21,7 @@
     repo: "{{ git_repo }}"
     dest: "{{ project_path }}"
     version: "{{ git_branch }}"
-
+   
 - name: Install python packages to virtualenv
   pip:
     requirements: "{{ project_path }}/requirements.txt"
@@ -31,12 +31,13 @@
 - name: Add project to PYTHONPATH of virtualenv
   template:
     src: "{{ item }}.j2"
-    dest: "{{ project_path }}/venv/lib/python3.6/site-packages/{{ item }}"
+    dest: "{{ project_path }}/venv/lib/python3.8/site-packages/{{ item }}"
   with_items:
     - 'regluit.pth'
     - 'opt.pth'
 
 - name: Create lock directory
+  become: yes
   file:
     path: "{{ project_path}}/.lock"
     state: directory
@@ -80,6 +81,16 @@
   with_items:
     - 'setup.sh'
     - 'dump.sh'
+    - '.my.cnf'
+
+- name: Copy mysql config file
+  become: yes
+  template:
+    src: "{{ item }}.j2"
+    dest: "/home/{{ user_name }}/{{ item }}"
+    mode: 0600
+  with_items:
+    - '.my.cnf'
 
 - name: Create django log directory
   become: yes

@@ -1,9 +1,8 @@
 ---
-# Need to install python3.6 and pip first so Ansible will function
-# This is due to Ubuntu 16 shipping with Python3 by default
-- name: Install python3.6 and pip for common
+# Need to install python3.8 and pip first so Ansible will function
+- name: Install python3.8 and pip for common
   become: true
-  raw: bash -c "apt -qqy update && apt install -qqy python3.6-dev python3-pip"
+  raw: bash -c "apt -qqy update && apt install -qqy python3.8-dev python3-pip"
   register: output
   changed_when: output.stdout != ""
 
@@ -31,7 +30,7 @@
 - name: Add project to PYTHONPATH of virtualenv
   template:
     src: "{{ item }}.j2"
-    dest: "{{ project_path }}/venv/lib/python3.6/site-packages/{{ item }}"
+    dest: "{{ project_path }}/venv/lib/python3.8/site-packages/{{ item }}"
   with_items:
     - 'regluit.pth'
     - 'opt.pth'
