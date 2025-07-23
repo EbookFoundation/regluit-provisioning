@@ -55,3 +55,5 @@ host_keys:
   aws_access_key_id: '{{ vault_aws_access_key_id }}'
   aws_secret_access_key: '{{ vault_aws_secret_access_key }}'
   aws_storage_bucket_name:  '{{ vault_aws_storage_bucket_name }}'
+  cf_turnstile_site_key:  '{{ vault_cf_turnstile_site_key }}'
+  cf_turnstile_secret_key:  '{{ vault_cf_turnstile_secret_key }}'
