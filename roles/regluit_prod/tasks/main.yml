@@ -127,6 +127,9 @@
 - name: Run celery tasks
   import_tasks: celery.yml
 
+- name: Run cron tasks
+  import_tasks: cron.yml
+
 
 
 

@@ -1,0 +1,43 @@
+---
+# Cron jobs for log cleanup and maintenance
+# See: https://github.com/Gluejar/regluit/issues/1073
+# See: https://github.com/Gluejar/regluit/issues/1078 (bot traffic)
+
+# Workaround for memory pressure under heavy bot traffic
+# TODO: Remove once proper bot mitigation is in place (see issue #1078)
+- name: Restart Apache periodically (workaround for bot load)
+  become: yes
+  ansible.builtin.cron:
+    name: "apache-restart-workaround"
+    minute: "9,29,49"
+    hour: "*"
+    job: "service apache2 restart"
+    user: root
+
+- name: Clean up old Apache logs (older than 14 days)
+  become: yes
+  ansible.builtin.cron:
+    name: "apache-log-cleanup"
+    minute: "0"
+    hour: "3"
+    job: "find /var/log/apache2 -name '*.log' -mtime +14 -delete"
+    user: root
+
+- name: Clean up old Celery metrics HTML (older than 30 days)
+  become: yes
+  ansible.builtin.cron:
+    name: "celery-metrics-cleanup"
+    minute: "15"
+    hour: "3"
+    job: "find /var/log/celery -name 'metrics-*.html' -mtime +30 -delete"
+    user: root
+
+- name: Compress old Django download logs
+  become: yes
+  ansible.builtin.cron:
+    name: "compress-download-logs"
+    minute: "30"
+    hour: "3"
+    weekday: "0"
+    job: "gzip /var/log/regluit/downloads.log.[3-9] 2>/dev/null || true"
+    user: root
