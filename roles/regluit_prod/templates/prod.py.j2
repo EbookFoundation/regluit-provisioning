@@ -82,8 +82,8 @@ LOGGING = {
             'level': 'INFO',
             'class': 'logging.handlers.GroupWriteRotatingFileHandler',
             'filename': join('/var/log/regluit', 'downloads.log'),
-            'maxBytes': 1024*1024*10, # 10 MB
-            'backupCount': 5,
+            'maxBytes': 1024*1024*20, # 20 MB
+            'backupCount': 9,
             'formatter': 'dl',
         },
     },
