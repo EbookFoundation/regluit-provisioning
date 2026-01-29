@@ -39,5 +39,5 @@
     minute: "30"
     hour: "3"
     weekday: "0"
-    job: "gzip /var/log/regluit/downloads.log.[3-9] 2>/dev/null || true"
+    job: "gzip /var/log/regluit/downloads.log.[3-9] >/dev/null 2>&1 || true"
     user: root
