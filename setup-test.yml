@@ -1,0 +1,69 @@
+---
+#
+# setup-test.yml - Ansible playbook for ephemeral test environments
+#
+# This playbook provisions a test server for:
+#   - Django version upgrades
+#   - Ansible validation
+#   - Feature development with production-like data
+#
+# Usage:
+#   1. Spin up test instance: ./scripts/spin-up-test.sh
+#   2. Run this playbook: ansible-playbook -i hosts setup-test.yml --ask-vault-pass
+#   3. Tear down when done: ./scripts/tear-down-test.sh
+#
+# The playbook uses Let's Encrypt staging certificates to avoid rate limits.
+#
+
+- hosts: regluit-test
+  gather_facts: false
+  vars:
+    # Override to use staging Let's Encrypt (avoid rate limits)
+    le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
+    # Test environment markers
+    deploy_type: 'test'
+    is_test_environment: true
+
+  tasks:
+    # Bootstrap Python for Ansible
+    - name: Install python3.8 and pip for test environment
+      become: true
+      raw: bash -c "apt -qqy update && apt install -y python3.8 python3-pip python3-apt"
+      register: output
+      changed_when: output.stdout != ""
+
+    - name: Gathering Facts
+      setup:
+
+    # Add test environment marker file
+    - name: Create test environment marker
+      become: true
+      copy:
+        content: |
+          TEST_ENVIRONMENT=true
+          PROVISIONED_AT={{ ansible_date_time.iso8601 }}
+          ANSIBLE_MANAGED=true
+        dest: /etc/regluit-test-env
+        mode: '0644'
+
+    # Include the main provisioning role
+    - include_role:
+        name: regluit_prod
+
+    # Test-specific post-provisioning tasks
+    - name: Display test environment information
+      debug:
+        msg: |
+          Test environment provisioned successfully!
+
+          Server: {{ server_name }}
+          SSH: ssh ubuntu@{{ ansible_host }}
+
+          Django admin: https://{{ server_name }}/admin/
+          Note: Using Let's Encrypt staging certificates (browser will show warning)
+
+          To verify:
+            curl -k https://{{ server_name }}/
+
+          Important: Remember to tear down when done!
+            ./scripts/tear-down-test.sh
