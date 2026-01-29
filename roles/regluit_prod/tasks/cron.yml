@@ -23,13 +23,13 @@
     job: "find /var/log/apache2 -name '*.log' -mtime +14 -delete"
     user: root
 
-- name: Clean up old Celery metrics HTML (older than 30 days)
+- name: Compress old Celery metrics HTML (older than 30 days)
   become: yes
   ansible.builtin.cron:
-    name: "celery-metrics-cleanup"
+    name: "celery-metrics-compress"
     minute: "15"
     hour: "3"
-    job: "find /var/log/celery -name 'metrics-*.html' -mtime +30 -delete"
+    job: "find /var/log/celery -name 'metrics-*.html' -mtime +30 -exec gzip {} \\;"
     user: root
 
 - name: Compress old Django download logs
