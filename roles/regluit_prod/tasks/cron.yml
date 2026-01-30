@@ -22,13 +22,3 @@
     hour: "3"
     job: "find /var/log/apache2 -name '*.log' -mtime +14 -delete"
     user: root
-
-- name: Compress old Django download logs
-  become: yes
-  ansible.builtin.cron:
-    name: "compress-download-logs"
-    minute: "30"
-    hour: "3"
-    weekday: "0"
-    job: "gzip /var/log/regluit/downloads.log.[3-9] >/dev/null 2>&1 || true"
-    user: root
