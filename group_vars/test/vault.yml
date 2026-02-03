@@ -1,0 +1,47 @@
+---
+###         Vault file for Regluit Test Environment                 ###
+###                                                                  ###
+### IMPORTANT: This is a placeholder file.                          ###
+###                                                                  ###
+### Before using the test environment, you must either:             ###
+###   1. Copy vault.yml from dev environment:                       ###
+###      cp group_vars/dev/vault.yml group_vars/test/vault.yml      ###
+###                                                                  ###
+###   2. Or create your own encrypted vault:                        ###
+###      ansible-vault create group_vars/test/vault.yml             ###
+###                                                                  ###
+### Required vault variables:                                        ###
+###   vault_mysql_db_name                                           ###
+###   vault_mysql_db_user                                           ###
+###   vault_mysql_db_pass                                           ###
+###   vault_mysql_db_host                                           ###
+###   vault_email_host                                              ###
+###   vault_email_host_user                                         ###
+###   vault_email_host_password                                     ###
+###   vault_secret_key                                              ###
+###   vault_booxtream_api_key                                       ###
+###   vault_booxtream_api_user                                      ###
+###   vault_dropbox_key                                             ###
+###   vault_github_public_token                                     ###
+###   vault_mailchimp_api_key                                       ###
+###   vault_mailchimp_news_id                                       ###
+###   vault_mobigen_url                                             ###
+###   vault_mobigen_user_id                                         ###
+###   vault_mobigen_password                                        ###
+###   vault_ku_email                                                ###
+###   vault_ku_password                                             ###
+###   vault_stripe_pk                                               ###
+###   vault_stripe_sk                                               ###
+###   vault_google_books_api_key                                    ###
+###   vault_social_auth_google_oauth2_key                           ###
+###   vault_social_auth_google_oauth2_secret                        ###
+###   vault_aws_access_key_id                                       ###
+###   vault_aws_secret_access_key                                   ###
+###   vault_aws_storage_bucket_name                                 ###
+
+# Placeholder - replace with actual encrypted vault
+# vault_mysql_db_name: "regluit_test"
+# vault_mysql_db_user: "regluit"
+# vault_mysql_db_pass: "CHANGE_ME"
+# vault_mysql_db_host: "localhost"
+# ... etc

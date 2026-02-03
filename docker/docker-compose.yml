@@ -1,0 +1,113 @@
+version: '3.8'
+
+#
+# Docker Compose configuration for local Regluit development
+#
+# This provides a local development environment with:
+#   - MySQL 8.0 database
+#   - Redis for caching and Celery broker
+#   - Optional services for testing
+#
+# Usage:
+#   docker-compose up -d              # Start services
+#   docker-compose logs -f mysql      # Watch MySQL logs
+#   docker-compose down               # Stop services
+#   docker-compose down -v            # Stop and remove volumes
+#
+# Prerequisites:
+#   - Docker and Docker Compose installed
+#   - Clone of the regluit repository at ../regluit (relative to this file)
+#   - Database dump in ./initdb/ (optional, for production-like data)
+#
+# Estimated cost: $0 (runs locally)
+#
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: regluit-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-regluit_root_pass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-regluit}
+      MYSQL_USER: ${MYSQL_USER:-regluit}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-regluit_pass}
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ./mysql-conf:/etc/mysql/conf.d:ro
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-regluit_root_pass}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: regluit-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Optional: Adminer for database management UI
+  adminer:
+    image: adminer:latest
+    container_name: regluit-adminer
+    restart: unless-stopped
+    ports:
+      - "${ADMINER_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    profiles:
+      - tools
+
+  # Optional: Redis Commander for Redis management UI
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: regluit-redis-commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - "${REDIS_COMMANDER_PORT:-8081}:8081"
+    depends_on:
+      - redis
+    profiles:
+      - tools
+
+  # Optional: MailHog for email testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: regluit-mailhog
+    restart: unless-stopped
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"   # SMTP
+      - "${MAILHOG_WEB_PORT:-8025}:8025"     # Web UI
+    profiles:
+      - email
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: regluit-network
