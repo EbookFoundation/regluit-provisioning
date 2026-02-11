@@ -12,14 +12,17 @@
 # make sure you have private/decrypted/ and private/certs/
 
 
+# --- Per-host Let's Encrypt certificate issuance (default) ---
+
 - name: Decrypt files
   copy:
     src: private/{{ item }}
     dest:  private/decrypted/{{ item }}
   with_items:
     - 'letsencrypt_account.key'
-    - '{{ server_name }}.csr'    
+    - '{{ server_name }}.csr'
   delegate_to: 127.0.0.1
+  when: not use_wildcard_cert|default(false)
 
 - name: Make sure account exists and has given contacts. We agree to TOS.
   acme_account:
@@ -31,10 +34,11 @@
     contact:
     - mailto:support@ebookfoundation.org
   delegate_to: 127.0.0.1
+  when: not use_wildcard_cert|default(false)
 
 - name: Fetch certs
   become: yes
-  fetch: 
+  fetch:
     src: /etc/ssl/certs/{{ item }}
     dest: private/certs/{{ item }}
     flat: yes
@@ -44,6 +48,7 @@
     - '{{ server_name }}.ca-bundle'
   tags:
     - certs
+  when: not use_wildcard_cert|default(false)
 
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
@@ -58,71 +63,77 @@
     fullchain_dest: "private/certs/{{ server_name }}.ca-bundle"
   delegate_to: 127.0.0.1
   register: acme_challenge
+  when: not use_wildcard_cert|default(false)
 
 
 - name: Create .well-known directory
   become: yes
-  file: 
+  file:
     path: "/var/www/static/.well-known"
     state: directory
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0755
+  when: not use_wildcard_cert|default(false)
 
 - name: Create acme-challenge directory
   become: yes
-  file: 
+  file:
     path: "/var/www/static/.well-known/acme-challenge"
     state: directory
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0755
+  when: not use_wildcard_cert|default(false)
 
 - name: Create .well-known directory for fresh server
   become: yes
-  file: 
+  file:
     path: "/var/www/html/.well-known"
     state: directory
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0755
+  when: not use_wildcard_cert|default(false)
 
 - name: Create acme-challenge directory for fresh server
   become: yes
-  file: 
+  file:
     path: "/var/www/html/.well-known/acme-challenge"
     state: directory
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0755
+  when: not use_wildcard_cert|default(false)
 
 - name: debug
   debug:
     msg: "{{ acme_challenge }}"
-  
+  when: not use_wildcard_cert|default(false)
+
 - name: copy main challenge
   copy:
     dest: /var/www/static/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
     content: "{{ acme_challenge['challenge_data'][server_name]['http-01']['resource_value'] }}"
-  when: acme_challenge is changed and server_name in acme_challenge['challenge_data']
+  when: not use_wildcard_cert|default(false) and acme_challenge is changed and server_name in acme_challenge['challenge_data']
 
 - name: copy alt challenge
   copy:
     dest: /var/www/static/{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource'] }}
     content: "{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource_value'] }}"
-  when: acme_challenge is changed and alt_server_name != '' and alt_server_name in acme_challenge['challenge_data']
+  when: not use_wildcard_cert|default(false) and acme_challenge is changed and alt_server_name != '' and alt_server_name in acme_challenge['challenge_data']
 
 - name: copy main challenge for fresh server
   copy:
     dest: /var/www/html/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
     content: "{{ acme_challenge['challenge_data'][server_name]['http-01']['resource_value'] }}"
-  when: acme_challenge is changed and server_name in acme_challenge['challenge_data']
+  when: not use_wildcard_cert|default(false) and acme_challenge is changed and server_name in acme_challenge['challenge_data']
 
 - name: copy alt challenge for fresh server
   copy:
     dest: /var/www/html/{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource'] }}
     content: "{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource_value'] }}"
-  when: acme_challenge is changed and alt_server_name != '' and alt_server_name in acme_challenge['challenge_data']
+  when: not use_wildcard_cert|default(false) and acme_challenge is changed and alt_server_name != '' and alt_server_name in acme_challenge['challenge_data']
 
 - name: Create a challenge for server_name using a account key file.
   acme_certificate:
@@ -137,10 +148,11 @@
     fullchain_dest: "private/certs/{{ server_name }}.ca-bundle"
     data: "{{ acme_challenge }}"
   delegate_to: 127.0.0.1
-    
-- name: Copy certs
+  when: not use_wildcard_cert|default(false)
+
+- name: Copy certs (per-host)
   become: yes
-  copy: 
+  copy:
     src: "private/certs/{{ item }}"
     dest: "/etc/ssl/certs/{{ item }}"
     owner: "{{ user_name }}"
@@ -149,29 +161,65 @@
   with_items:
     - '{{ server_name }}.crt'
     - '{{ server_name }}.ca-bundle'
-  notify: 
+  notify:
     - restart apache
   tags:
     - certs
+  when: not use_wildcard_cert|default(false)
 
-- name: Copy server key
+- name: Copy server key (per-host)
   become: yes
-  copy: 
+  copy:
     src: "private/{{ server_name }}.key"
     dest: "/etc/ssl/private/server.key"
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0600
-  notify: 
+  notify:
     - restart apache
   tags:
     - certs
+  when: not use_wildcard_cert|default(false)
 
-- name:  delete decrypted files
+- name: Delete decrypted files
   file:
     path: "private/decrypted/{{ item }}"
     state: file
   with_items:
     - 'letsencrypt_account.key'
-    - '{{ server_name }}.csr'    
+    - '{{ server_name }}.csr'
   delegate_to: 127.0.0.1
+  when: not use_wildcard_cert|default(false)
+
+# --- Wildcard certificate deployment (when use_wildcard_cert is true) ---
+
+- name: Copy wildcard certs
+  become: yes
+  copy:
+    src: "private/wildcard/{{ wildcard_cert_name }}.{{ item.ext }}"
+    dest: "/etc/ssl/certs/{{ server_name }}.{{ item.ext }}"
+    owner: root
+    group: root
+    mode: 0644
+  with_items:
+    - { ext: 'crt' }
+    - { ext: 'ca-bundle' }
+  notify:
+    - restart apache
+  tags:
+    - certs
+  when: use_wildcard_cert|default(false)
+
+- name: Copy wildcard key
+  become: yes
+  copy:
+    src: "private/wildcard/{{ wildcard_cert_name }}.key"
+    dest: "/etc/ssl/private/server.key"
+    owner: root
+    group: root
+    mode: 0600
+  notify:
+    - restart apache
+  tags:
+    - certs
+  when: use_wildcard_cert|default(false)

@@ -1,0 +1,63 @@
+---
+###         Variables for Regluit Test Server                    ###
+### Used for testing Ansible playbooks and Django upgrades       ###
+### Sensitive vars are references to actual values in vault.yml  ###
+### Use ansible-vault view vault.yml to see the secret values    ###
+
+project_path: "/opt/regluit"
+django_settings_module: "regluit.settings.prod"
+virtualenv_name: "venv"
+user_name: "ubuntu"
+server_name: "test.unglue.it"  # Change to actual IP/hostname after instance creation
+wsgi_home: "/opt/regluit/venv"
+wsgi_python_path: "/opt/regluit/venv/bin/python3"
+git_repo: "https://github.com/Gluejar/regluit.git"
+git_branch: "production"  # Change to test branch as needed
+# Use Let's Encrypt staging for test to avoid rate limits
+le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
+alt_server_name: ""
+deploy_type: 'test'
+# Use pre-issued wildcard cert (*.unglue.it) instead of per-host LE issuance
+use_wildcard_cert: true
+wildcard_cert_name: "wildcard.unglue.it"
+
+### Variables in settings.prod.py ###
+mysql_db_name: "{{ vault_mysql_db_name }}"
+mysql_db_user: "{{ vault_mysql_db_user }}"
+mysql_db_pass: "{{ vault_mysql_db_pass }}"
+mysql_db_host: "{{ vault_mysql_db_host }}"
+mysql_db_port: ""
+email_host: "{{ vault_email_host }}"
+email_port: 587
+default_from_email: "notices@gluejar.com"
+
+### Variables in common.py ###
+common_keys:
+  booxtream_api_key: "{{ vault_booxtream_api_key }}"
+  booxtream_api_user: "{{ vault_booxtream_api_user }}"
+  dropbox_key: "{{ vault_dropbox_key }}"
+  github_public_token: "{{ vault_github_public_token }}"
+  mailchimp_api_key: "{{ vault_mailchimp_api_key }}"
+  mailchimp_news_id: "{{ vault_mailchimp_news_id }}"
+  mobigen_url:  "{{ vault_mobigen_url }}"
+  mobigen_user_id:  "{{ vault_mobigen_user_id }}"
+  mobigen_password:  "{{ vault_mobigen_password }}"
+  ku_email:  "{{ vault_ku_email }}"
+  ku_password:  "{{ vault_ku_password }}"
+  stripe_pk:  "{{ vault_stripe_pk }}"
+  stripe_sk:  "{{ vault_stripe_sk }}"
+  librarything_key: "{{ vault_librarything_key }}"
+
+### Variables in host.py ###
+host_keys:
+  secret_key: '{{ vault_secret_key }}'
+  google_books_api_key: "{{ vault_google_books_api_key }}"
+  email_host_user: '{{ vault_email_host_user }}'
+  email_host_password:  '{{ vault_email_host_password }}'
+  social_auth_google_oauth2_key: '{{ vault_social_auth_google_oauth2_key }}'
+  social_auth_google_oauth2_secret: '{{ vault_social_auth_google_oauth2_secret }}'
+  aws_access_key_id: '{{ vault_aws_access_key_id }}'
+  aws_secret_access_key: '{{ vault_aws_secret_access_key }}'
+  aws_storage_bucket_name:  '{{ vault_aws_storage_bucket_name }}'
+  cf_turnstile_site_key:  '{{ vault_cf_turnstile_site_key }}'
+  cf_turnstile_secret_key:  '{{ vault_cf_turnstile_secret_key }}'

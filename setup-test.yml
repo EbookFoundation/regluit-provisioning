@@ -1,0 +1,31 @@
+---
+# Playbook for deploying Regluit to a test instance
+# Used for validating Ansible playbooks and testing Django upgrades
+#
+# Usage:
+#   ansible-playbook -i hosts setup-test.yml
+#
+# To deploy a specific branch:
+#   ansible-playbook -i hosts setup-test.yml -e git_branch=my-feature-branch
+#
+# Prerequisites:
+#   1. Create EC2 instance and add to hosts file under [test] group
+#   2. Update group_vars/test/vars.yml with correct server_name (IP or hostname)
+#   3. Ensure vault password is set: export ANSIBLE_VAULT_PASSWORD_FILE=/path/to/vault_pass.txt
+#   4. Add SSH key to agent: ssh-add /path/to/production.pem
+
+- hosts: regluit-test
+  gather_facts: true
+  tasks:
+    # Need to install python3 and pip first so Ansible will function
+    - name: Install python3 and pip for test
+      become: true
+      raw: bash -c "apt -qqy update && apt install -y python3 python3-pip python3-apt"
+      register: output
+      changed_when: output.stdout != ""
+
+    - name: Gathering Facts
+      setup:
+
+    - include_role:
+        name: regluit_prod
