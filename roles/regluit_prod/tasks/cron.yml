@@ -4,7 +4,9 @@
 # See: https://github.com/Gluejar/regluit/issues/1078 (bot traffic)
 
 # Workaround for memory pressure under heavy bot traffic
-# TODO: Remove once proper bot mitigation is in place (see issue #1078)
+# Bot mitigation (bot-block.conf, BotBlockingMiddleware) is now live on prod (2026-02-27).
+# TODO: Monitor load over coming days; if load stays low, remove this restart workaround
+#       and file a provisioning issue to remove the cron entry via Ansible.
 - name: Restart Apache periodically (workaround for bot load)
   become: yes
   ansible.builtin.cron:
@@ -14,11 +16,20 @@
     job: "service apache2 restart"
     user: root
 
-- name: Clean up old Apache logs (older than 14 days)
+- name: Gzip Apache logs older than 1 day
+  become: yes
+  ansible.builtin.cron:
+    name: "apache-log-gzip"
+    minute: "0"
+    hour: "3"
+    job: "find /var/log/apache2 -name '*.log' -mtime +1 -exec gzip {} \\;"
+    user: root
+
+- name: Delete gzipped Apache logs older than 30 days
   become: yes
   ansible.builtin.cron:
     name: "apache-log-cleanup"
     minute: "0"
     hour: "3"
-    job: "find /var/log/apache2 -name '*.log' -mtime +14 -delete"
+    job: "find /var/log/apache2 -name '*.log.gz' -mtime +30 -delete"
     user: root
