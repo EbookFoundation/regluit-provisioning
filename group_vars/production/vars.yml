@@ -17,9 +17,15 @@ le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 alt_server_name: "www.unglue.it"
 deploy_type: 'prod'
 
-# IPs blocked at Apache level before requests reach Django/WSGI.
-# Add egregious single-IP offenders here; re-run playbook to apply.
-# UA-based blocking is handled by Django's BotBlockingMiddleware.
+# IPs and CIDRs blocked at Apache level before requests reach Django/WSGI.
+# UA-based blocking is also in bot-block.conf (SetEnvIfNoCase) and in Django's
+# BotBlockingMiddleware — the Apache layer fires first, saving WSGI slots.
+
+# Entire network ranges to block (distributed bots that rotate IPs within a /16):
+blocked_cidrs:
+  - 43.173.0.0/16   # Tencent Cloud — distributed bot, 1,495 IPs on 2026-02-26
+
+# Individual IPs for single-host offenders:
 blocked_ips:
   - 216.73.216.178  # ClaudeBot (Anthropic) — 229K req/day 2026-02-26
 
