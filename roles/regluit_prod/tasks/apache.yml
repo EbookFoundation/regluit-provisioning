@@ -64,7 +64,24 @@
 - name: Enable SSL rewrite headers
   become: yes
   command: a2enmod ssl rewrite headers
-  notify: 
+  notify:
+    - restart apache
+
+- name: Deploy bot-block conf
+  become: yes
+  template:
+    src: bot-block.conf.j2
+    dest: /etc/apache2/conf-available/bot-block.conf
+    owner: root
+    group: root
+    mode: 0644
+  notify:
+    - restart apache
+
+- name: Enable bot-block conf
+  become: yes
+  command: a2enconf bot-block
+  notify:
     - restart apache
 
 - name: Generate static files
