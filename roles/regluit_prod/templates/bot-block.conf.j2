@@ -22,6 +22,7 @@ SetEnvIfNoCase User-Agent "perplexitybot"       bad_bot
 SetEnvIfNoCase User-Agent "perplexity-user"     bad_bot
 SetEnvIfNoCase User-Agent "amazonbot"           bad_bot
 SetEnvIfNoCase User-Agent "meta-externalagent"  bad_bot
+SetEnvIfNoCase User-Agent "meta-webindexer"     bad_bot
 SetEnvIfNoCase User-Agent "facebookbot"         bad_bot
 SetEnvIfNoCase User-Agent "ccbot"               bad_bot
 SetEnvIfNoCase User-Agent "diffbot"             bad_bot
@@ -29,6 +30,9 @@ SetEnvIfNoCase User-Agent "bytespider"          bad_bot
 SetEnvIfNoCase User-Agent "cohere-ai"           bad_bot
 SetEnvIfNoCase User-Agent "timpibot"            bad_bot
 SetEnvIfNoCase User-Agent "imagesiftbot"        bad_bot
+SetEnvIfNoCase User-Agent "dataforseo"          bad_bot
+SetEnvIfNoCase User-Agent "QIHU 360SE"          bad_bot
+SetEnvIfNoCase User-Agent "MetaSr"              bad_bot
 
 <Location />
     <RequireAll>
