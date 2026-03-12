@@ -1,0 +1,34 @@
+---
+# Log management: journal size cap and HTTP redirect log suppression
+# See: https://github.com/Gluejar/regluit/issues/1111
+# See: https://github.com/EbookFoundation/regluit-provisioning/issues/17
+
+# Cap systemd journal size — default is unbounded and can consume 1.5GB+
+- name: Create journald config directory
+  become: yes
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    mode: 0755
+
+- name: Cap systemd journal size to 500MB
+  become: yes
+  ansible.builtin.copy:
+    content: |
+      [Journal]
+      SystemMaxUse=500M
+    dest: /etc/systemd/journald.conf.d/size-limit.conf
+    mode: 0644
+  notify: restart journald
+
+# The port 80 vhost only does HTTP→HTTPS redirects.
+# Without a CustomLog, Apache falls back to other_vhosts_access.log
+# which grows unbounded (was 933MB at one point). Disable it.
+- name: Disable other-vhosts-access-log (redirect log noise)
+  become: yes
+  ansible.builtin.command:
+    cmd: a2disconf other-vhosts-access-log
+  register: a2disconf_result
+  changed_when: "'Conf other-vhosts-access-log disabled' in a2disconf_result.stdout"
+  failed_when: false
+  notify: restart apache

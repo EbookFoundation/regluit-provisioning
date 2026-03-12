@@ -130,8 +130,7 @@
 - name: Run cron tasks
   import_tasks: cron.yml
 
-
-
-
+- name: Run log management tasks
+  import_tasks: log_management.yml
 
 

@@ -1,6 +1,12 @@
 ---
 - name: restart apache
   become: yes
-  service: 
+  service:
     name: apache2
+    state: restarted
+
+- name: restart journald
+  become: yes
+  ansible.builtin.service:
+    name: systemd-journald
     state: restarted
