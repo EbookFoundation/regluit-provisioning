@@ -1,2 +1,3 @@
 ---
 python_version: "3.8"
+celery_major_version: 4

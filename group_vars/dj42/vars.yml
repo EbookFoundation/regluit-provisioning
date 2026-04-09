@@ -3,6 +3,7 @@
 ### Fresh EC2 instance with Ubuntu 24.04 LTS baseline                  ###
 
 python_version: "3.12"
+celery_major_version: 5
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
 virtualenv_name: "venv"

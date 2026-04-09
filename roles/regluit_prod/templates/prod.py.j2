@@ -53,7 +53,11 @@ EMAIL_PORT = '{{ email_port }}'
 DEFAULT_FROM_EMAIL = '{{ default_from_email }}'
 
 # send celery log to Python logging
+{% if celery_major_version | default(4) >= 5 %}
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+{% else %}
+WORKER_HIJACK_ROOT_LOGGER = False
+{% endif %}
 
 # Next step to try https
 #BASE_URL = 'http://{{ server_name }}'
@@ -124,29 +128,41 @@ STATIC_ROOT = '/var/www/static'
 #CKEDITOR_UPLOAD_PREFIX = 'https://unglue.it/static/media/'
 
 # start out with nothing scheduled
+{% if celery_major_version | default(4) >= 5 %}
 CELERY_BEAT_SCHEDULE = {}
+{% else %}
+CELERYBEAT_SCHEDULE = {}
+{% endif %}
 CELERY_LOG_DIR = '/var/log/celery'
 
 # decide which of the period tasks to add to the schedule
+{% if celery_major_version | default(4) >= 5 %}
+{% set sched = 'CELERY_BEAT_SCHEDULE' %}
+{% else %}
+{% set sched = 'CELERYBEAT_SCHEDULE' %}
+{% endif %}
 if '{{ deploy_type }}' == 'test':
-    CELERY_BEAT_SCHEDULE['send_test_email'] = SEND_TEST_EMAIL_JOB
-    CELERY_BEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
+    {{ sched }}['send_test_email'] = SEND_TEST_EMAIL_JOB
+    {{ sched }}['save_info_page'] = SAVE_INFO_PAGE
 elif '{{ deploy_type }}' == 'prod':
     # update the statuses of campaigns
-    CELERY_BEAT_SCHEDULE['update_active_campaign_statuses'] = UPDATE_ACTIVE_CAMPAIGN_STATUSES
-    CELERY_BEAT_SCHEDULE['report_new_ebooks'] = EBOOK_NOTIFICATIONS_JOB
-    CELERY_BEAT_SCHEDULE['notify_ending_soon'] = NOTIFY_ENDING_SOON_JOB
-    CELERY_BEAT_SCHEDULE['update_account_statuses'] = UPDATE_ACCOUNT_STATUSES
-    CELERY_BEAT_SCHEDULE['notify_expiring_accounts'] = NOTIFY_EXPIRING_ACCOUNTS
-    CELERY_BEAT_SCHEDULE['refresh_acqs'] = REFRESH_ACQS_JOB
-    CELERY_BEAT_SCHEDULE['refresh_acqs'] = NOTIFY_UNCLAIMED_GIFTS
-    CELERY_BEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
-    CELERY_BEAT_SCHEDULE['periodic_cleanup'] = PERIODIC_CLEANUP
-    CELERY_BEAT_SCHEDULE['emit_notices'] = EMIT_NOTICES
-    CELERY_BEAT_SCHEDULE['feature_new_work'] = FEATURE_NEW_WORK
+    {{ sched }}['update_active_campaign_statuses'] = UPDATE_ACTIVE_CAMPAIGN_STATUSES
+    {{ sched }}['report_new_ebooks'] = EBOOK_NOTIFICATIONS_JOB
+    {{ sched }}['notify_ending_soon'] = NOTIFY_ENDING_SOON_JOB
+    {{ sched }}['update_account_statuses'] = UPDATE_ACCOUNT_STATUSES
+    {{ sched }}['notify_expiring_accounts'] = NOTIFY_EXPIRING_ACCOUNTS
+    {{ sched }}['refresh_acqs'] = REFRESH_ACQS_JOB
+    {{ sched }}['refresh_acqs'] = NOTIFY_UNCLAIMED_GIFTS
+    {{ sched }}['save_info_page'] = SAVE_INFO_PAGE
+    {{ sched }}['periodic_cleanup'] = PERIODIC_CLEANUP
+    {{ sched }}['emit_notices'] = EMIT_NOTICES
+    {{ sched }}['feature_new_work'] = FEATURE_NEW_WORK
 
-
+{% if celery_major_version | default(4) >= 5 %}
 CELERY_ACCEPT_CONTENT = ['json']
+{% else %}
+ACCEPT_CONTENT = ['pickle', 'json', 'msgpack', 'yaml']
+{% endif %}
 
 # set -- sandbox or production Amazon FPS?
 #AMAZON_FPS_HOST = "fps.sandbox.amazonaws.com"
