@@ -4,6 +4,7 @@
 ### Use ansible-vault view vault.yml to see the secret values     ###
 
 python_version: "3.8"
+celery_major_version: 5
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
 virtualenv_name: "venv"
