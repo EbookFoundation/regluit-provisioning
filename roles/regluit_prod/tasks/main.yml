@@ -1,4 +1,14 @@
 ---
+- name: Safety check - non-production deploys must not use production database
+  assert:
+    that:
+      - "deploy_type == 'prod' or 'production' not in mysql_db_host"
+    fail_msg: >
+      ABORTING: deploy_type={{ deploy_type }} but mysql_db_host={{ mysql_db_host }}
+      contains 'production'. Non-production environments must use their own database.
+      Check group_vars/{{ deploy_type }}/vault.yml vault_mysql_db_host.
+  when: deploy_type is defined
+
 - name: Install prod dependencies
   become: true
   apt:

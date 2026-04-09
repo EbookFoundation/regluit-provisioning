@@ -1,4 +1,5 @@
 # coding=utf-8
+from django.core.exceptions import ImproperlyConfigured
 from .common import *
 
 ALLOWED_HOSTS = ['.unglue.it']
@@ -29,6 +30,14 @@ DATABASES = {
         }
     }
 }
+
+# Safety check: non-production deploys must not use production database
+if '{{ deploy_type }}' != 'prod' and 'production' in DATABASES['default'].get('HOST', ''):
+    raise ImproperlyConfigured(
+        "deploy_type='{{ deploy_type }}' is connected to a production database "
+        "(HOST=%s). Non-production environments must use their own database. "
+        "Check vault_mysql_db_host in group_vars." % DATABASES['default']['HOST']
+    )
 
 TIME_ZONE = 'America/New_York'
 
