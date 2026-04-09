@@ -3,7 +3,8 @@
 ### Sensitive vars are references to actual values in vault.yml ###
 ### Use ansible-vault view vault.yml to see the secret values   ###
 
-python_version: "3.8"
+python_version: "3.12"
+celery_major_version: 5
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
 virtualenv_name: "venv"
@@ -12,7 +13,7 @@ server_name: "unglue.it"
 wsgi_home: "/opt/regluit/venv"
 wsgi_python_path: "/opt/regluit/venv/bin/python3"
 git_repo: "https://github.com/Gluejar/regluit.git"
-git_branch: "production"
+git_branch: "main"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 #le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
 alt_server_name: "www.unglue.it"

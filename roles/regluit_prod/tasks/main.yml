@@ -35,7 +35,7 @@
 - name: Install python packages to virtualenv
   pip:
     requirements: "{{ project_path }}/requirements.txt"
-    state: latest
+    state: present
     virtualenv: "{{ project_path }}/venv"
 
 - name: Add project to PYTHONPATH of virtualenv
