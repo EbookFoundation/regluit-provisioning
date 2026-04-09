@@ -67,18 +67,19 @@
 - name: Create DNS-01 challenge TXT records in Route53
   community.aws.route53:
     zone: "unglue.it"
-    record: "{{ item.value['dns-01']['record'] }}"
+    record: "{{ item.key }}"
     type: TXT
     ttl: 60
-    value: "\"{{ item.value['dns-01']['resource_value'] }}\""
+    value: "\"{{ item.value | first }}\""
     state: present
     overwrite: yes
-    aws_access_key: "{{ host_keys.aws_access_key_id }}"
-    aws_secret_key: "{{ host_keys.aws_secret_access_key }}"
+    profile: "ebookfoundation"
     wait: yes
   loop: "{{ acme_challenge.challenge_data_dns | dict2items }}"
   when: acme_challenge is changed
   delegate_to: 127.0.0.1
+  environment:
+    AWS_PROFILE: ""
 
 - name: Wait for DNS propagation
   pause:
@@ -103,16 +104,17 @@
 - name: Clean up DNS-01 challenge TXT records
   community.aws.route53:
     zone: "unglue.it"
-    record: "{{ item.value['dns-01']['record'] }}"
+    record: "{{ item.key }}"
     type: TXT
     ttl: 60
-    value: "\"{{ item.value['dns-01']['resource_value'] }}\""
+    value: "\"{{ item.value | first }}\""
     state: absent
-    aws_access_key: "{{ host_keys.aws_access_key_id }}"
-    aws_secret_key: "{{ host_keys.aws_secret_access_key }}"
+    profile: "ebookfoundation"
   loop: "{{ acme_challenge.challenge_data_dns | dict2items }}"
   when: acme_challenge is changed
   delegate_to: 127.0.0.1
+  environment:
+    AWS_PROFILE: ""
 
 - name: Copy wildcard cert to server
   become: yes
