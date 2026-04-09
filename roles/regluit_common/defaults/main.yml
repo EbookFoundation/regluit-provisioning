@@ -1,3 +1,4 @@
+python_version: "3.8"
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.me"
 virtualenv_name: "venv"

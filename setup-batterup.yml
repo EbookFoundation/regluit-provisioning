@@ -2,10 +2,10 @@
 - hosts: regluit-ondeck
   gather_facts: false
   tasks:
-    # Need to install python3.8 and pip first so Ansible will function
-  - name: Install python3.8 and pip
+    # Need to install python and pip first so Ansible will function
+  - name: Install python{{ python_version }} and pip
     become: true
-    raw: bash -c "apt -qqy update && apt install -qqy python3.6-dev python-pip"
+    raw: bash -c "apt -qqy update && apt install -qqy python{{ python_version }}-dev python3-pip"
     register: output
     changed_when: output.stdout != ""
 

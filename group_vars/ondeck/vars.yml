@@ -3,6 +3,7 @@
 ### Sensitive vars are references to actual values in vault.yml ###
 ### Use ansible-vault view vault.yml to see the secret values   ###
 
+python_version: "3.6"
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
 virtualenv_name: "venv"
