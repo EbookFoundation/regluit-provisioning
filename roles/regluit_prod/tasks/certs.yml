@@ -1,27 +1,35 @@
 ---
-# Wildcard certificate for *.unglue.it using Let's Encrypt DNS-01 challenge.
+# Per-host TLS certificate issuance via Let's Encrypt (HTTP-01 challenge).
 #
-# Prerequisites (one-time, already done):
+# Each host gets a cert tied to its own {{ server_name }}. Optionally covers
+# an {{ alt_server_name }} too (e.g., www.unglue.it alongside unglue.it).
+#
+# Prerequisites (one-time per host, done manually on the Ansible control node):
 #   openssl genrsa -out private/letsencrypt_account.key 4096
-#   openssl genrsa -out private/wildcard.unglue.it.key 4096
-#   openssl req -new -sha256 -key private/wildcard.unglue.it.key \
-#     -out private/wildcard.unglue.it.csr \
-#     -subj "/CN=*.unglue.it" \
-#     -addext "subjectAltName=DNS:*.unglue.it,DNS:unglue.it"
+#   openssl genrsa -out private/{{ server_name }}.key 4096
+#   openssl req -new -sha256 -key private/{{ server_name }}.key \
+#     -out private/{{ server_name }}.csr \
+#     -subj "/CN={{ server_name }}"
+#   ansible-vault encrypt private/{{ server_name }}.key private/{{ server_name }}.csr
 #
-# The wildcard cert covers all *.unglue.it subdomains plus the bare domain.
-# DNS-01 challenge is automated via Route53 using AWS credentials from vault.
+# Make sure private/decrypted/ and private/certs/ exist on the control node.
+#
+# To skip cert management for a given environment (e.g., when certs are
+# managed externally like by certbot running on the server), set
+# `manage_certs: false` in that environment's group_vars. The import in
+# tasks/main.yml already honors this flag.
 
-- name: Decrypt key files
+
+- name: Decrypt files
   copy:
     src: private/{{ item }}
-    dest: private/decrypted/{{ item }}
+    dest:  private/decrypted/{{ item }}
   with_items:
     - 'letsencrypt_account.key'
-    - 'wildcard.unglue.it.csr'
+    - '{{ server_name }}.csr'
   delegate_to: 127.0.0.1
 
-- name: Make sure ACME account exists
+- name: Make sure account exists and has given contacts. We agree to TOS.
   acme_account:
     account_key_src: private/decrypted/letsencrypt_account.key
     acme_directory: "{{ le_endpoint }}"
@@ -32,7 +40,7 @@
     - mailto:support@ebookfoundation.org
   delegate_to: 127.0.0.1
 
-- name: Fetch existing certs (if any)
+- name: Fetch certs
   become: yes
   fetch:
     src: /etc/ssl/certs/{{ item }}
@@ -40,83 +48,103 @@
     flat: yes
     fail_on_missing: no
   with_items:
-    - 'wildcard.unglue.it.crt'
-    - 'wildcard.unglue.it.ca-bundle'
+    - '{{ server_name }}.crt'
+    - '{{ server_name }}.ca-bundle'
   tags:
     - certs
 
-- name: Request wildcard certificate (step 1 - get challenge)
+- name: Create a challenge for server_name using a account key file.
   acme_certificate:
     account_key_src: "private/decrypted/letsencrypt_account.key"
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     remaining_days: 45
-    force: yes
-    challenge: dns-01
     select_crypto_backend: openssl
-    csr: "private/decrypted/wildcard.unglue.it.csr"
-    dest: "private/certs/wildcard.unglue.it.crt"
-    fullchain_dest: "private/certs/wildcard.unglue.it.ca-bundle"
+    csr: "private/decrypted/{{ server_name }}.csr"
+    dest: "private/certs/{{ server_name }}.crt"
+    fullchain_dest: "private/certs/{{ server_name }}.ca-bundle"
   delegate_to: 127.0.0.1
   register: acme_challenge
 
-- name: Debug challenge data
+
+- name: Create .well-known directory
+  become: yes
+  file:
+    path: "/var/www/static/.well-known"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: Create acme-challenge directory
+  become: yes
+  file:
+    path: "/var/www/static/.well-known/acme-challenge"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: Create .well-known directory for fresh server
+  become: yes
+  file:
+    path: "/var/www/html/.well-known"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: Create acme-challenge directory for fresh server
+  become: yes
+  file:
+    path: "/var/www/html/.well-known/acme-challenge"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: debug
   debug:
     msg: "{{ acme_challenge }}"
 
-- name: Create DNS-01 challenge TXT records in Route53
-  community.aws.route53:
-    zone: "unglue.it"
-    record: "{{ item.key }}"
-    type: TXT
-    ttl: 60
-    value: "\"{{ item.value | first }}\""
-    state: present
-    overwrite: yes
-    profile: "ebookfoundation"
-    wait: yes
-  loop: "{{ acme_challenge.challenge_data_dns | dict2items }}"
-  when: acme_challenge is changed
-  delegate_to: 127.0.0.1
-  environment:
-    AWS_PROFILE: ""
+- name: copy main challenge
+  copy:
+    dest: /var/www/static/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
+    content: "{{ acme_challenge['challenge_data'][server_name]['http-01']['resource_value'] }}"
+  when: acme_challenge is changed and server_name in acme_challenge['challenge_data']
 
-- name: Wait for DNS propagation
-  pause:
-    seconds: 30
-  when: acme_challenge is changed
+- name: copy alt challenge
+  copy:
+    dest: /var/www/static/{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource'] }}
+    content: "{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource_value'] }}"
+  when: acme_challenge is changed and alt_server_name != '' and alt_server_name in acme_challenge['challenge_data']
 
-- name: Validate challenge and retrieve wildcard certificate (step 2)
+- name: copy main challenge for fresh server
+  copy:
+    dest: /var/www/html/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
+    content: "{{ acme_challenge['challenge_data'][server_name]['http-01']['resource_value'] }}"
+  when: acme_challenge is changed and server_name in acme_challenge['challenge_data']
+
+- name: copy alt challenge for fresh server
+  copy:
+    dest: /var/www/html/{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource'] }}
+    content: "{{ acme_challenge['challenge_data'][alt_server_name]['http-01']['resource_value'] }}"
+  when: acme_challenge is changed and alt_server_name != '' and alt_server_name in acme_challenge['challenge_data']
+
+- name: Create a challenge for server_name using a account key file.
   acme_certificate:
     account_key_src: private/decrypted/letsencrypt_account.key
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
-    force: no
     remaining_days: 45
-    challenge: dns-01
     select_crypto_backend: openssl
-    csr: "private/decrypted/wildcard.unglue.it.csr"
-    dest: "private/certs/wildcard.unglue.it.crt"
-    fullchain_dest: "private/certs/wildcard.unglue.it.ca-bundle"
+    csr: "private/decrypted/{{ server_name }}.csr"
+    dest: "private/certs/{{ server_name }}.crt"
+    fullchain_dest: "private/certs/{{ server_name }}.ca-bundle"
     data: "{{ acme_challenge }}"
   delegate_to: 127.0.0.1
 
-- name: Clean up DNS-01 challenge TXT records
-  community.aws.route53:
-    zone: "unglue.it"
-    record: "{{ item.key }}"
-    type: TXT
-    ttl: 60
-    value: "\"{{ item.value | first }}\""
-    state: absent
-    profile: "ebookfoundation"
-  loop: "{{ acme_challenge.challenge_data_dns | dict2items }}"
-  when: acme_challenge is changed
-  delegate_to: 127.0.0.1
-  environment:
-    AWS_PROFILE: ""
-
-- name: Copy wildcard cert to server
+- name: Copy certs
   become: yes
   copy:
     src: "private/certs/{{ item }}"
@@ -125,17 +153,17 @@
     group: "{{ user_name }}"
     mode: 0600
   with_items:
-    - 'wildcard.unglue.it.crt'
-    - 'wildcard.unglue.it.ca-bundle'
+    - '{{ server_name }}.crt'
+    - '{{ server_name }}.ca-bundle'
   notify:
     - restart apache
   tags:
     - certs
 
-- name: Copy wildcard key to server
+- name: Copy server key
   become: yes
   copy:
-    src: "private/wildcard.unglue.it.key"
+    src: "private/{{ server_name }}.key"
     dest: "/etc/ssl/private/server.key"
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
@@ -145,11 +173,11 @@
   tags:
     - certs
 
-- name: Delete decrypted files
+- name:  delete decrypted files
   file:
     path: "private/decrypted/{{ item }}"
-    state: absent
+    state: file
   with_items:
     - 'letsencrypt_account.key'
-    - 'wildcard.unglue.it.csr'
+    - '{{ server_name }}.csr'
   delegate_to: 127.0.0.1

@@ -133,6 +133,7 @@
 
 - name: Run cert tasks
   import_tasks: certs.yml
+  when: manage_certs | default(true)
 
 - name: Run celery tasks
   import_tasks: celery.yml
