@@ -1,0 +1,35 @@
+# Pre-commit hooks for regluit-provisioning
+#
+# Install: pip install pre-commit && pre-commit install
+# Manual run: pre-commit run --all-files
+#
+# These hooks run on every `git commit` to catch security and hygiene issues
+# before they become commits. They can be bypassed with --no-verify but that's
+# intentional — commit with care.
+
+repos:
+  - repo: local
+    hooks:
+      - id: no-plaintext-private-keys
+        name: Reject unencrypted private keys
+        description: |
+          Refuse to commit files containing PEM private keys unless the file
+          is ansible-vault encrypted (starts with $ANSIBLE_VAULT). This
+          prevents accidents like security-private#10 where a wildcard key
+          was committed to a public repo.
+        entry: .githooks/check-no-plaintext-keys.sh
+        language: script
+        pass_filenames: true
+        types: [file]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+        # Built-in hook as a belt-and-suspenders check; catches common PEM
+        # headers (RSA, EC, PGP, etc.) that our custom hook might miss.
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: trailing-whitespace
+        exclude: '\.(crt|csr|key|pem|ca-bundle)$'
