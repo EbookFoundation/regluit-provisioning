@@ -1,0 +1,33 @@
+# gitleaks configuration for regluit-provisioning
+#
+# See: https://github.com/gitleaks/gitleaks#configuration
+#
+# Why this file exists: gitleaks' default ruleset catches generic API keys
+# and private key headers — both useful. But Ansible template defaults in
+# this repo intentionally contain placeholder values (like "0123456789...")
+# that trigger false positives. Those templates render at deploy time from
+# real secrets stored in vault.yml files (ansible-vault encrypted).
+#
+# Added as part of EbookFoundation/security-private#10 remediation.
+
+title = "regluit-provisioning gitleaks config"
+
+# Use gitleaks' default rules as the base. Our additions below only ADD
+# allowlist entries; they do not weaken detection.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholder values in role defaults and templates — real secrets come from vault.yml files"
+paths = [
+    # Ansible role defaults — values overridden by vault.yml at deploy time.
+    # These files contain placeholder strings like "012345678901234" and
+    # "abcdef1234567890abcdef1234567890" that are meant to be replaced.
+    '''roles/regluit_common/defaults/main\.yml$''',
+
+    # Jinja2 templates — same pattern: placeholder default values in
+    # os.environ.get() calls, meant to be overridden by real env vars or
+    # vault-rendered config at deploy time.
+    '''roles/regluit_common/templates/common\.py\.j2$''',
+    '''roles/regluit_common/templates/host\.py\.j2$''',
+]

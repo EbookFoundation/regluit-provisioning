@@ -33,3 +33,12 @@ repos:
       - id: check-merge-conflict
       - id: trailing-whitespace
         exclude: '\.(crt|csr|key|pem|ca-bundle)$'
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+        # Broader secret scanning: AWS keys, GitHub tokens, Stripe keys,
+        # generic API keys, private keys in any PEM format, etc. Uses
+        # .gitleaks.toml for repo-specific allowlists (placeholder defaults
+        # in templates are allowlisted there).

@@ -1,0 +1,33 @@
+name: Secret scan (gitleaks)
+
+# Runs gitleaks against every PR and every push to master.
+# Catches secrets that slip past the pre-commit hook (e.g., when a
+# contributor hasn't installed pre-commit, or uses --no-verify).
+#
+# Added as part of EbookFoundation/security-private#10 remediation.
+# See also: .gitleaks.toml (allowlist config), .pre-commit-config.yaml
+# (local enforcement).
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code (with full history for delta scan)
+        uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 tells gitleaks-action to scan the full diff
+          # between base and head for PRs, and full history on push.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Public repo: no GITLEAKS_LICENSE required.
+          # Uses .gitleaks.toml from repo root for allowlist config.
