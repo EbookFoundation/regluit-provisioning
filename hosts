@@ -2,10 +2,6 @@
 regluit-dev ansible_host=m.unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
 [test]
 regluit-test ansible_host=test.unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
-[ondeck]
-regluit-ondeck ansible_host=ondeck.unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
-[dj11]
-regluit-dj11 ansible_host=13.223.11.191 ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3 ansible_ssh_private_key_file=/Volumes/ryvault1/gluejar/EC2_Keys/production.pem
 [dj42]
 regluit-dj42 ansible_host=54.165.7.142 ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3 ansible_ssh_private_key_file=/Volumes/ryvault1/gluejar/EC2_Keys/production.pem
 [production]

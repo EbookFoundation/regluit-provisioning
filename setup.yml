@@ -3,8 +3,8 @@
 # Usage:
 #   ansible-playbook setup.yml -l regluit-prod      # production (unglue.it)
 #   ansible-playbook setup.yml -l regluit-test       # test.unglue.it
-#   ansible-playbook setup.yml -l regluit-dev        # m.unglue.it
-#   ansible-playbook setup.yml -l regluit-ondeck     # ondeck.unglue.it
+#   ansible-playbook setup.yml -l regluit-dj42      # dj42.unglue.it (Django 4.2 staging)
+#   ansible-playbook setup.yml -l regluit-dev        # m.unglue.it (legacy)
 #
 # Each environment is configured via group_vars/<group>/vars.yml and vault.yml.
 # To add a new environment:
