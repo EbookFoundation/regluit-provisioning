@@ -4,30 +4,43 @@
 #
 # Why this file exists: gitleaks' default ruleset catches generic API keys
 # and private key headers — both useful. But Ansible template defaults in
-# this repo intentionally contain placeholder values (like "0123456789...")
-# that trigger false positives. Those templates render at deploy time from
-# real secrets stored in vault.yml files (ansible-vault encrypted).
+# this repo intentionally contain placeholder values (like "012345678901234"
+# and "abcdef1234567890abcdef1234567890") that trigger false positives.
+# Those placeholders are overridden at deploy time by real values from
+# vault.yml files (ansible-vault encrypted).
 #
 # Added as part of EbookFoundation/security-private#10 remediation.
+#
+# IMPORTANT: this config allowlists by placeholder *content*, NOT by file
+# path. A prior version allowlisted entire template files, which would
+# have silently hidden any real secret later committed to those files.
+# This version scopes suppression to the specific placeholder strings.
 
 title = "regluit-provisioning gitleaks config"
 
-# Use gitleaks' default rules as the base. Our additions below only ADD
+# Use gitleaks' default rules as the base. Additions below only ADD
 # allowlist entries; they do not weaken detection.
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Placeholder values in role defaults and templates — real secrets come from vault.yml files"
-paths = [
-    # Ansible role defaults — values overridden by vault.yml at deploy time.
-    # These files contain placeholder strings like "012345678901234" and
-    # "abcdef1234567890abcdef1234567890" that are meant to be replaced.
-    '''roles/regluit_common/defaults/main\.yml$''',
+description = "Obvious placeholder strings used in Ansible template defaults — real secrets come from vault.yml"
 
-    # Jinja2 templates — same pattern: placeholder default values in
-    # os.environ.get() calls, meant to be overridden by real env vars or
-    # vault-rendered config at deploy time.
-    '''roles/regluit_common/templates/common\.py\.j2$''',
-    '''roles/regluit_common/templates/host\.py\.j2$''',
+# Stopwords: if the detected secret value CONTAINS any of these substrings,
+# the finding is filtered. Stopwords are checked against the matched secret
+# itself, not the surrounding file content, so a real secret appearing
+# elsewhere in the same file will still be flagged.
+stopwords = [
+    # Sequential-digit placeholders used across defaults/main.yml and
+    # *.j2 templates (dropbox_key, boxstream_api_key, MOBIGEN_PASSWORD,
+    # SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET default, AWS_ACCESS_KEY_ID default, etc.)
+    "012345678901234",
+
+    # Hex placeholder used for LIBRARYTHING_KEY default
+    "abcdef1234567890",
+
+    # Cloudflare Turnstile test/dummy key documented at
+    # https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+    # (always fails validation; safe to ship as a default)
+    "1x0000000000000000000000000000000AA",
 ]
