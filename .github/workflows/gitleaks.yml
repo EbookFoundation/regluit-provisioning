@@ -7,6 +7,12 @@ name: Secret scan (gitleaks)
 # Added as part of EbookFoundation/security-private#10 remediation.
 # See also: .gitleaks.toml (allowlist config), .pre-commit-config.yaml
 # (local enforcement).
+#
+# Why not gitleaks/gitleaks-action@v2:
+#   The official Action started requiring a paid GITLEAKS_LICENSE for
+#   GitHub organizations (regardless of public/private repo status).
+#   The gitleaks binary itself remains MIT-licensed and free, so we
+#   run it directly.
 
 on:
   pull_request:
@@ -21,13 +27,36 @@ jobs:
       - name: Checkout code (with full history for delta scan)
         uses: actions/checkout@v4
         with:
-          # fetch-depth: 0 tells gitleaks-action to scan the full diff
-          # between base and head for PRs, and full history on push.
+          # fetch-depth: 0 so gitleaks can scan the full diff between
+          # base and head on PRs.
           fetch-depth: 0
 
-      - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+      - name: Install gitleaks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Public repo: no GITLEAKS_LICENSE required.
-          # Uses .gitleaks.toml from repo root for allowlist config.
+          GITLEAKS_VERSION: "8.30.1"
+        run: |
+          set -euo pipefail
+          curl -fsSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR: scan the diff between base and head
+            gitleaks detect \
+              --source . \
+              --log-opts "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+              --verbose \
+              --redact
+          else
+            # Push: scan the commits in this push
+            gitleaks detect \
+              --source . \
+              --log-opts "${{ github.event.before }}..${{ github.sha }}" \
+              --verbose \
+              --redact
+          fi
