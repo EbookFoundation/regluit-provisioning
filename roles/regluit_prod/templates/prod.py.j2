@@ -9,10 +9,17 @@ IS_PREVIEW = False
 
 SITE_ID = 1
 
+{% if disable_admin_emails | default(false) %}
+# This environment is non-production; override ADMINS to an empty tuple so
+# Django's AdminEmailHandler doesn't forward staging errors to production
+# admins. See EbookFoundation/security-private#11 (2026-04-23 incident).
+ADMINS = ()
+{% else %}
 ADMINS = (
-    ('Raymond Yee', 'rdhyee+ungluebugs@gluejar.com'),
+    ('Raymond Yee', 'raymond.yee+ungluebugs@gmail.com'),
     ('Eric Hellman', 'eric@gluejar.com'),
 )
+{% endif %}
 
 MANAGERS = ADMINS
 
