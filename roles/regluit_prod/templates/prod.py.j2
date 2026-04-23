@@ -141,10 +141,7 @@ CELERY_LOG_DIR = '/var/log/celery'
 {% else %}
 {% set sched = 'CELERYBEAT_SCHEDULE' %}
 {% endif %}
-if '{{ deploy_type }}' == 'test':
-    {{ sched }}['send_test_email'] = SEND_TEST_EMAIL_JOB
-    {{ sched }}['save_info_page'] = SAVE_INFO_PAGE
-elif '{{ deploy_type }}' == 'prod':
+if '{{ deploy_type }}' == 'prod':
     # update the statuses of campaigns
     {{ sched }}['update_active_campaign_statuses'] = UPDATE_ACTIVE_CAMPAIGN_STATUSES
     {{ sched }}['report_new_ebooks'] = EBOOK_NOTIFICATIONS_JOB
