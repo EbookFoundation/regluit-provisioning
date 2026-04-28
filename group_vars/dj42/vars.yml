@@ -20,7 +20,14 @@ deploy_type: 'test'
 # Cert management: dj42's TLS cert is managed directly by certbot running
 # on the host (systemd timer for renewal), not by this Ansible workflow.
 # See EbookFoundation/security-private#10 for the rotation history.
+# When manage_certs is false, apache.conf.j2 references certbot paths
+# (/etc/letsencrypt/live/<server_name>/...) instead of the Ansible-deployed
+# /etc/ssl/certs/ paths.
 manage_certs: false
+
+# Non-production environment: suppress error emails to prod admins.
+# See EbookFoundation/security-private#11.
+disable_admin_emails: true
 
 # SSH access: this environment uses the production key pair. Operators who
 # don't have the key at this path should override by setting

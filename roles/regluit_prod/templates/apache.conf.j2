@@ -23,9 +23,16 @@ ServerAdmin info@ebookfoundation.org
 SSLEngine on
 SSLProtocol All -SSLv2 -SSLv3
 
+{% if manage_certs | default(true) %}
 SSLCertificateFile    /etc/ssl/certs/{{ server_name }}.crt
 SSLCertificateKeyFile /etc/ssl/private/server.key
 SSLCertificateChainFile /etc/ssl/certs/{{ server_name }}.ca-bundle
+{% else %}
+# Cert managed externally (e.g., by certbot's systemd timer). See the host's
+# group_vars/<env>/vars.yml comment on manage_certs for the rotation story.
+SSLCertificateFile    /etc/letsencrypt/live/{{ server_name }}/fullchain.pem
+SSLCertificateKeyFile /etc/letsencrypt/live/{{ server_name }}/privkey.pem
+{% endif %}
 
 WSGIDaemonProcess regluit processes=2 threads=15 python-eggs=/tmp/regluit-python-eggs
 WSGIScriptAlias / /opt/regluit/deploy/prod.wsgi
