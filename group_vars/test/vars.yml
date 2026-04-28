@@ -4,7 +4,7 @@
 ### Use ansible-vault view vault.yml to see the secret values     ###
 
 python_version: "3.8"
-celery_major_version: 5
+celery_major_version: 4
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
 virtualenv_name: "venv"
@@ -13,19 +13,21 @@ server_name: "test.unglue.it"
 wsgi_home: "/opt/regluit/venv"
 wsgi_python_path: "/opt/regluit/venv/bin/python3"
 git_repo: "https://github.com/Gluejar/regluit.git"
-git_branch: "fix/django-upgrade-libraryauth"
+git_branch: "production"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 #le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
 alt_server_name: ""
 deploy_type: 'test'
 
-# Cert management: test.unglue.it currently serves an older shared wildcard
-# cert (valid through mid-May 2026). We are NOT renewing it via Ansible —
-# the per-host automation would require generating a dedicated
-# test.unglue.it key/CSR pair, which is tracked as a follow-up. Once that
-# lands, flip manage_certs to true and populate private/test.unglue.it.{key,csr}.
-# See EbookFoundation/security-private#10.
-manage_certs: false
+# Cert management: per-host HTTP-01 issuance via Let's Encrypt.
+# The previous shared wildcard cert was revoked 2026-04-21 (key compromise,
+# see EbookFoundation/security-private#10). Per-host key/CSR are now
+# vault-encrypted in private/test.unglue.it.{key,csr}.
+manage_certs: true
+
+# Non-production environment: suppress error emails to prod admins.
+# See EbookFoundation/security-private#11.
+disable_admin_emails: true
 
 ### Variables in settings.prod.py ###
 mysql_db_name: "{{ vault_mysql_db_name }}"
