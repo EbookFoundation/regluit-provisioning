@@ -23,9 +23,9 @@ ServerAdmin info@ebookfoundation.org
 SSLEngine on
 SSLProtocol All -SSLv2 -SSLv3
 
-SSLCertificateFile    /etc/ssl/certs/wildcard.unglue.it.crt
+SSLCertificateFile    /etc/ssl/certs/{{ server_name }}.crt
 SSLCertificateKeyFile /etc/ssl/private/server.key
-SSLCertificateChainFile /etc/ssl/certs/wildcard.unglue.it.ca-bundle
+SSLCertificateChainFile /etc/ssl/certs/{{ server_name }}.ca-bundle
 
 WSGIDaemonProcess regluit processes=2 threads=15 python-eggs=/tmp/regluit-python-eggs
 WSGIScriptAlias / /opt/regluit/deploy/prod.wsgi
