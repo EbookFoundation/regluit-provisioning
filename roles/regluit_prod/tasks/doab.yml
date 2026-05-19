@@ -1,0 +1,76 @@
+---
+# DOAB OAI orchestration — nightly harvest + one-off backfill.
+#
+# Both hit the same DOAB OAI endpoint. They must NEVER run concurrently
+# (slow-and-gentle: never double the request rate). Coordination is a single
+# host lock /var/lock/doab-oai.lock, acquired non-blocking (flock -n) inside
+# BOTH wrapper scripts: whichever is running, the other skips its tick.
+#
+# - Harvest  (Gluejar/regluit#1129): nightly, 3-day rolling window.
+# - Backfill (Gluejar/regluit#1151): one-off ~20.6k catch-up, bounded per
+#   tick, resumable, halt-aware via .done/.halted markers. Drains over days.
+#
+# Production only (deploy_type == 'prod').
+#
+# CROSS-HOST INVARIANT: this flock is host-local. doab-check (separate DO
+# host) also drains a DOAB backfill against the same OAI endpoint. Only ONE
+# may be armed at a time. regluit is the active runner (auto via discovery);
+# doab-check's runner is inert until its operator explicitly sets IDS_FILE.
+# Do not arm doab-check's backfill until this one's .done marker is present.
+
+- name: Create DOAB backfill state directory
+  become: yes
+  ansible.builtin.file:
+    path: /var/lib/regluit/doab-backfill
+    state: directory
+    owner: "{{ user_name }}"
+    group: "www-data"
+    mode: "02775"
+  when: deploy_type | default('') == 'prod'
+
+# /var/log/regluit is created in main.yml; doab-harvest.log /
+# doab-backfill.log land there and are rotated by the existing
+# "regluit-log-cleanup" task in cron.yml (30-day retention).
+
+- name: Install DOAB harvest wrapper script
+  become: yes
+  ansible.builtin.template:
+    src: doab-harvest.sh.j2
+    dest: "/home/{{ user_name }}/doab-harvest.sh"
+    owner: "{{ user_name }}"
+    mode: "0755"
+  when: deploy_type | default('') == 'prod'
+
+- name: Install DOAB backfill runner script
+  become: yes
+  ansible.builtin.template:
+    src: doab-backfill.sh.j2
+    dest: "/home/{{ user_name }}/doab-backfill.sh"
+    owner: "{{ user_name }}"
+    mode: "0755"
+  when: deploy_type | default('') == 'prod'
+
+- name: DOAB harvest (nightly, flock-serialised)
+  become: yes
+  ansible.builtin.cron:
+    name: "regluit-doab-harvest"
+    minute: "30"
+    hour: "4"
+    user: "{{ user_name }}"
+    job: "/home/{{ user_name }}/doab-harvest.sh"
+  when: deploy_type | default('') == 'prod'
+
+# Backfill ticks every 30 min, deliberately offset from the 04:30 harvest.
+# ~20.6k records / ~500 per pass ≈ 40+ ticks ≈ ~1 day at this cadence —
+# the intended slow drip. The flock guarantees a tick that overlaps the
+# nightly harvest simply skips (and vice-versa). Self-disables via the
+# .done marker once drained; freezes via .halted on a circuit-breaker.
+- name: DOAB backfill (bounded pass every 30 min, flock-serialised)
+  become: yes
+  ansible.builtin.cron:
+    name: "regluit-doab-backfill"
+    minute: "0,30"
+    hour: "*"
+    user: "{{ user_name }}"
+    job: "/home/{{ user_name }}/doab-backfill.sh"
+  when: deploy_type | default('') == 'prod'

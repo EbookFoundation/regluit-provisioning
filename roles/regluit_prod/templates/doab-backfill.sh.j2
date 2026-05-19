@@ -1,0 +1,76 @@
+#!/bin/bash
+# DOAB backfill runner — one bounded pass per cron tick.
+#
+# Managed by Ansible (roles/regluit_prod/templates/doab-backfill.sh.j2).
+# Drains the ~20.6k-record DOAB catch-up worklist (Gluejar/regluit#1151) by
+# invoking `backfill_doab` repeatedly, slowly, never concurrently with the
+# nightly DOAB harvest (shared flock), honoring the in-command circuit
+# breakers ACROSS ticks via marker files.
+#
+# Exit-code contract (set by the management command):
+#   0  drained / nothing-to-do  -> write .done, stop running
+#   3  benign checkpoint        -> do nothing, cron re-fires next tick
+#   4  circuit-breaker halt      -> write .halted, freeze until operator clears
+#   *  unexpected                -> fail safe: write .halted
+#
+# NOTE: deliberately NOT `set -e` — we must inspect the command's rc.
+set -uo pipefail
+
+STATE_DIR=/var/lib/regluit/doab-backfill
+LOG=/var/log/regluit/doab-backfill.log
+LOCK=/var/lock/doab-oai.lock
+DONE="$STATE_DIR/.done"
+HALTED="$STATE_DIR/.halted"
+STATE="$STATE_DIR/state.json"
+
+ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+log() { echo "$(ts) [doab-backfill] $*" >> "$LOG"; }
+
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+
+if [ -f "$DONE" ]; then
+    log ".done present — worklist drained; nothing to do"
+    exit 0
+fi
+if [ -f "$HALTED" ]; then
+    log ".halted present — circuit broken; awaiting operator review of $STATE"
+    exit 0
+fi
+
+# Single DOAB-OAI client per host: this lock is ALSO held by the nightly
+# harvest wrapper. -n => if held, skip this tick (cron fires again later).
+exec 9>"$LOCK" || { log "cannot open lock $LOCK; skipping tick"; exit 0; }
+if ! flock -n 9; then
+    log "DOAB-OAI lock held (harvest or prior backfill running); skipping tick"
+    exit 0
+fi
+
+log "starting bounded backfill pass"
+cd {{ project_path }} || { log "cd {{ project_path }} failed; skipping tick"; exit 0; }
+
+DJANGO_SETTINGS_MODULE={{ django_settings_module }} \
+    {{ project_path }}/{{ virtualenv_name }}/bin/django-admin backfill_doab \
+    --state-file "$STATE" >> "$LOG" 2>&1
+rc=$?
+
+case "$rc" in
+    0)
+        touch "$DONE"
+        log "DRAINED (rc=0) -> wrote .done; backfill complete"
+        ;;
+    3)
+        log "checkpoint (rc=3) -> cron will re-fire next tick"
+        ;;
+    4)
+        touch "$HALTED"
+        log "HALT (rc=4) -> wrote .halted; OPERATOR REVIEW NEEDED ($STATE)"
+        ;;
+    *)
+        touch "$HALTED"
+        log "UNEXPECTED rc=$rc -> wrote .halted (fail-safe); OPERATOR REVIEW NEEDED"
+        ;;
+esac
+
+# Never exit non-zero: a failing cron job mails root, and Eric treats
+# error-email volume as a signal. Failure is expressed via .halted + log.
+exit 0
