@@ -1,0 +1,42 @@
+#!/bin/bash
+# Nightly DOAB OAI harvest (Gluejar/regluit#1129) — wrapped so it shares the
+# DOAB-OAI host lock with the backfill runner.
+#
+# Managed by Ansible (roles/regluit_prod/templates/doab-harvest.sh.j2).
+# Behaviour is unchanged from the original inline #31 cron except that it
+# now runs under `flock -n /var/lock/doab-oai.lock`, guaranteeing at most
+# one DOAB-OAI client process per host (slow-and-gentle: never double the
+# request rate by running harvest + backfill simultaneously).
+#
+# Window: 3 days back -> open-ended. load_doab dedupes by record id, so the
+# overlap is cheap and resilient to an occasional skipped night.
+#
+# Retry-After: this wrapper does NOT re-check the shared sentinel — the
+# `load_doab` management command reads it natively at the top of handle()
+# (read_block_deadline -> "SKIP: DOAB OAI rate-limited ..." -> return) using
+# the exact same race-free helpers as backfill. Keeping the wrapper thin
+# makes the command the single source of sentinel truth; duplicating the
+# check here would risk the two drifting.
+set -uo pipefail
+
+LOG=/var/log/regluit/doab-harvest.log
+LOCK=/var/lock/doab-oai.lock
+
+ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+exec 9>"$LOCK" || { echo "$(ts) [doab-harvest] cannot open lock $LOCK" >> "$LOG"; exit 0; }
+if ! flock -n 9; then
+    # Backfill (or a prior harvest) is using the OAI endpoint. Skip tonight;
+    # the 3-day rolling window self-heals the gap on the next clear night.
+    echo "$(ts) [doab-harvest] DOAB-OAI lock held; skipping this run" >> "$LOG"
+    exit 0
+fi
+
+cd {{ project_path }} || { echo "$(ts) [doab-harvest] cd failed" >> "$LOG"; exit 0; }
+FROM="$(date -u -d '3 days ago' +%Y-%m-%d)"
+echo "$(ts) [doab-harvest] starting load_doab from $FROM" >> "$LOG"
+DJANGO_SETTINGS_MODULE={{ django_settings_module }} \
+    {{ project_path }}/{{ virtualenv_name }}/bin/django-admin load_doab \
+    "$FROM" --max=20000 >> "$LOG" 2>&1
+echo "$(ts) [doab-harvest] load_doab exited rc=$?" >> "$LOG"
+exit 0

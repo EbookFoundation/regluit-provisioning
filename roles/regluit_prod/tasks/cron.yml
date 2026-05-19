@@ -81,21 +81,7 @@
     path: /etc/cron.d/cleanup-apache-logs
     state: absent
 
-# DOAB OAI harvest — runs nightly on production only.
-# Matches doab-check's cadence (nightly load_doab) per Gluejar/regluit#1129
-# and Eric's direction (2026-04-23 meeting).
-#
-# Window: 3 days back -> open-ended. The 3-day overlap is intentional —
-# load_doab dedupes by record id, so re-fetching is cheap and resilient
-# to occasional missed nights (server reboot, transient OAI 5xx, etc.).
-# Output (incl. stderr) appended to /var/log/regluit/doab-harvest.log,
-# which is rotated by the existing "regluit-log-cleanup" task above.
-- name: DOAB harvest (nightly)
-  become: yes
-  ansible.builtin.cron:
-    name: "regluit-doab-harvest"
-    minute: "30"
-    hour: "4"
-    user: "{{ user_name }}"
-    job: 'cd {{ project_path }} && DJANGO_SETTINGS_MODULE={{ django_settings_module }} {{ project_path }}/{{ virtualenv_name }}/bin/django-admin load_doab "$(date -u -d ''3 days ago'' +\%Y-\%m-\%d)" --max=20000 >> /var/log/regluit/doab-harvest.log 2>&1'
-  when: deploy_type | default('') == 'prod'
+# DOAB OAI harvest + backfill cron, the wrapper scripts that install them,
+# and the shared flock that serialises them are all owned by doab.yml
+# (imported from main.yml). Kept together because the nightly harvest and
+# the one-off backfill must share a single host lock — see doab.yml.
