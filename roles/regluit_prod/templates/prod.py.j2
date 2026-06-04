@@ -134,7 +134,7 @@ if '{{ deploy_type }}' == 'prod':
     CELERYBEAT_SCHEDULE['update_account_statuses'] = UPDATE_ACCOUNT_STATUSES
     CELERYBEAT_SCHEDULE['notify_expiring_accounts'] = NOTIFY_EXPIRING_ACCOUNTS
     CELERYBEAT_SCHEDULE['refresh_acqs'] = REFRESH_ACQS_JOB
-    CELERYBEAT_SCHEDULE['refresh_acqs'] = NOTIFY_UNCLAIMED_GIFTS
+    CELERYBEAT_SCHEDULE['notify_unclaimed_gifts'] = NOTIFY_UNCLAIMED_GIFTS
     CELERYBEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
     CELERYBEAT_SCHEDULE['periodic_cleanup'] = PERIODIC_CLEANUP
     CELERYBEAT_SCHEDULE['emit_notices'] = EMIT_NOTICES
