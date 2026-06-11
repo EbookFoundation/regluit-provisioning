@@ -149,18 +149,24 @@ CELERY_LOG_DIR = '/var/log/celery'
 {% set sched = 'CELERYBEAT_SCHEDULE' %}
 {% endif %}
 if '{{ deploy_type }}' == 'prod':
-    # update the statuses of campaigns
-    {{ sched }}['update_active_campaign_statuses'] = UPDATE_ACTIVE_CAMPAIGN_STATUSES
-    {{ sched }}['report_new_ebooks'] = EBOOK_NOTIFICATIONS_JOB
-    {{ sched }}['notify_ending_soon'] = NOTIFY_ENDING_SOON_JOB
-    {{ sched }}['update_account_statuses'] = UPDATE_ACCOUNT_STATUSES
-    {{ sched }}['notify_expiring_accounts'] = NOTIFY_EXPIRING_ACCOUNTS
-    {{ sched }}['refresh_acqs'] = REFRESH_ACQS_JOB
-    {{ sched }}['refresh_acqs'] = NOTIFY_UNCLAIMED_GIFTS
+    # Beat schedule per RY/Eric decision 2026-06-11: only these four jobs run.
+    # (emit_notices verified safe: send queue measured 0 on the 2026-06-11 prod copy.)
     {{ sched }}['save_info_page'] = SAVE_INFO_PAGE
     {{ sched }}['periodic_cleanup'] = PERIODIC_CLEANUP
     {{ sched }}['emit_notices'] = EMIT_NOTICES
     {{ sched }}['feature_new_work'] = FEATURE_NEW_WORK
+    # --- PARKED 2026-06-11 (campaign-era / unverified email senders) --------
+    # Re-enable deliberately, one at a time, after per-job verification.
+    # Audit trail: regluit#1140 (prune audit), provisioning#37 (dup-key bug).
+    #   update_active_campaign_statuses  (campaigns eliminated)
+    #   report_new_ebooks                (email; unverified recipients)
+    #   notify_ending_soon               (email; 0 campaigns ending within 7d)
+    #   update_account_statuses          (campaign-era housekeeping)
+    #   notify_expiring_accounts         (email; ~4 candidates measured)
+    #   refresh_acqs                     (never actually scheduled since Jan 2015:
+    #                                     dup-key typo ea5adba8 -- retire, don't revive)
+    #   notify_unclaimed_gifts           (email; 4 candidates; had been running
+    #                                     under the key 'refresh_acqs' since 2015)
 
 {% if celery_major_version | default(4) >= 5 %}
 CELERY_ACCEPT_CONTENT = ['json']
