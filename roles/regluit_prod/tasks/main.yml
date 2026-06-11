@@ -27,6 +27,11 @@
     requirements: "{{ project_path }}/requirements.txt"
     state: latest
     virtualenv: "{{ project_path }}/venv"
+    # --exists-action=w: when an editable git checkout in venv/src no longer
+    # matches the pinned URL/commit (e.g. branch switch), wipe + re-clone
+    # instead of prompting "What to do?" into a pipe nobody can answer
+    # (observed hanging deploys for an hour on 2026-06-11).
+    extra_args: "--exists-action=w"
 
 - name: Add project to PYTHONPATH of virtualenv
   template:
