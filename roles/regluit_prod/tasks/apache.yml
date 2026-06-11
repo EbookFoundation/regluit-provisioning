@@ -32,6 +32,24 @@
     group: "{{ user_name }}"
     mode: 0755
 
+- name: Create maintenance-mode directory
+  become: yes
+  file:
+    path: "/var/www/maintenance"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: Install maintenance page (toggle = touch/rm /var/www/maintenance/MAINTENANCE_ON)
+  become: yes
+  template:
+    src: maintenance.html.j2
+    dest: "/var/www/maintenance/maintenance.html"
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0644
+
 - name: Create WSGI Script
   become: yes
   template:
