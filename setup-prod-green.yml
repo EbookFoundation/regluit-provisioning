@@ -1,0 +1,23 @@
+# Build prod-green ("batterup") — the Django 4.2 green box that takes over
+# unglue.it at EIP flip. Mirrors setup-prod.yml; recipe proven by the
+# 2026-06-11 dj42 from-scratch rebuild.
+#
+# Usage (after filling in ansible_host in hosts and green RDS endpoint in
+# group_vars/prod-green/vars.yml):
+#   ansible-playbook -i hosts setup-prod-green.yml --check   # recon first
+#   ansible-playbook -i hosts setup-prod-green.yml
+- hosts: regluit-prod-green
+  gather_facts: false
+  tasks:
+    # Need to install python and pip first so Ansible will function
+  - name: Install python{{ python_version }} and pip
+    become: true
+    raw: bash -c "apt -qqy update && apt install -y python{{ python_version }} python3-pip python3-apt"
+    register: output
+    changed_when: output.stdout != ""
+
+  - name: Gathering Facts
+    setup:
+
+  - include_role:
+      name: regluit_prod

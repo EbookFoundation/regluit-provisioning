@@ -13,7 +13,9 @@ server_name: "unglue.it"
 wsgi_home: "/opt/regluit/venv"
 wsgi_python_path: "/opt/regluit/venv/bin/python3"
 git_repo: "https://github.com/Gluejar/regluit.git"
-git_branch: "main"
+# Per-machine deploy branches (RY decision 2026-06-11, runsheet A2):
+# the production box deploys the `production` branch, not `main`/`master`.
+git_branch: "production"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 #le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
 alt_server_name: "www.unglue.it"

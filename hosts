@@ -6,3 +6,7 @@ regluit-test ansible_host=test.unglue.it ansible_user=ubuntu ansible_python_inte
 regluit-dj42 ansible_host=54.165.7.142 ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
 [production]
 regluit-prod ansible_host=unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
+# prod-green ("batterup"): fill in ansible_host with the new instance's public
+# IP (or spare EIP) at build time, BEFORE running setup-prod-green.yml.
+[prod-green]
+regluit-prod-green ansible_host=FILL-IN-AT-BUILD-TIME ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
