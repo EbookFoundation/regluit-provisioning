@@ -27,10 +27,31 @@ le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 alt_server_name: "www.unglue.it"
 deploy_type: 'prod'
 
-# Cert plan (OPEN ITEM — decide before build day): green serves unglue.it but
-# HTTP-01 validation cannot succeed until the EIP flip points unglue.it here.
-# dj42 pattern (manage_certs: false + host certbot) requires running certbot
-# AFTER the flip, or pre-issuing via DNS-01. Do NOT silently flip this to true.
+# Cert plan — DECIDED 2026-06-15 (RY): DNS-01 PRE-ISSUE via Route 53, so green
+# holds a valid unglue.it cert BEFORE the EIP flip → zero TLS-mismatch window.
+#
+# Why not the Ansible flow: roles/regluit_prod/tasks/certs.yml is HTTP-01 only
+# (writes /var/www/.../.well-known/acme-challenge), which can't validate until
+# unglue.it points here — i.e. not until after the flip. So keep manage_certs
+# false (host-certbot pattern, same as dj42; apache.conf.j2 references
+# /etc/letsencrypt/live/<server_name>/ paths) and pre-issue ONCE by hand:
+#
+#   sudo apt-get install -y certbot python3-certbot-dns-route53
+#   sudo certbot certonly --dns-route53 \
+#        -d unglue.it -d www.unglue.it \
+#        --non-interactive --agree-tos -m <ops-email>
+#
+# Prereq: certbot needs AWS creds that can write the Route 53 zone TXT record
+# (route53:ChangeResourceRecordSets + GetChange/ListHostedZones). The box's
+# STANDING creds (vault aws_* = s3user) are S3-only — do NOT rely on them.
+# Run the command at build time under an operator profile with Route 53 rights
+# (e.g. AWS_PROFILE=ebookfoundation), or attach a scoped instance role just for
+# issuance. unglue.it DNS is Route 53 (zone confirmed 2026-06-15), apex A
+# record → the EIP, so DNS-01 is fully automatable.
+#
+# Renewal: AFTER the flip the domain points here, so certbot's normal HTTP-01
+# renewal timer works like prod7 today — DNS-01 is only for the one pre-issue.
+# Do NOT silently flip manage_certs to true.
 manage_certs: false
 
 # PRODUCTION behavior: error emails to admins MUST flow (Eric uses error-email
