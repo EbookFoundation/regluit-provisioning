@@ -84,3 +84,15 @@
     settings: "{{ django_settings_module }}"
   notify:
     - restart apache
+
+- name: Localize Site row to this box's hostname
+  # Fixes regluit#1164: snapshot-restored staging boxes inherit prod's Site row
+  # (domain='unglue.it'), causing emailed links to point at prod.
+  # server_name is the bare apex hostname (no www.) for every box, so it maps
+  # directly to the desired Site domain.  On prod (server_name=unglue.it) this
+  # is a no-op because the Site row already carries the correct domain.
+  django_manage:
+    app_path: "{{ project_path }}"
+    command: "set_site_domain {{ server_name }}"
+    virtualenv: "{{ project_path }}/venv"
+    settings: "{{ django_settings_module }}"
