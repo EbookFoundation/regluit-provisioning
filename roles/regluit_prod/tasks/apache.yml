@@ -89,10 +89,17 @@
   # Fixes regluit#1164: snapshot-restored staging boxes inherit prod's Site row
   # (domain='unglue.it'), causing emailed links to point at prod.
   # server_name is the bare apex hostname (no www.) for every box, so it maps
-  # directly to the desired Site domain.  On prod (server_name=unglue.it) this
-  # is a no-op because the Site row already carries the correct domain.
+  # directly to the desired Site domain.
+  # Guarded off on production: prod's Site row is already correct, so this makes
+  # "never mutate prod's Site row" a hard guarantee rather than a no-op-by-luck
+  # (Codex review 2026-06-16).
   django_manage:
     app_path: "{{ project_path }}"
     command: "set_site_domain {{ server_name }}"
     virtualenv: "{{ project_path }}/venv"
     settings: "{{ django_settings_module }}"
+  register: set_site_domain_result
+  # The command prints "Updated Site ..." only when it actually wrote to the DB;
+  # otherwise it prints a "no-op" line. Report changed only on a real write.
+  changed_when: "'Updated Site' in (set_site_domain_result.out | default(''))"
+  when: server_name != "unglue.it"
