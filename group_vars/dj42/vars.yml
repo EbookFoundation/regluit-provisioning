@@ -12,7 +12,9 @@ server_name: "dj42.unglue.it"
 wsgi_home: "/opt/regluit/venv"
 wsgi_python_path: "/opt/regluit/venv/bin/python3"
 git_repo: "https://github.com/Gluejar/regluit.git"
-git_branch: "fix/django-upgrade-libraryauth"
+# Corrected 2026-06-16: was "fix/django-upgrade-libraryauth" (stale) but the live
+# box has run the dj42.unglue.it branch since the 6/11 rebuild. See runbook §0.8.
+git_branch: "dj42.unglue.it"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 alt_server_name: ""
 deploy_type: 'test'

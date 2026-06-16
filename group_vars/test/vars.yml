@@ -13,7 +13,10 @@ server_name: "test.unglue.it"
 wsgi_home: "/opt/regluit/venv"
 wsgi_python_path: "/opt/regluit/venv/bin/python3"
 git_repo: "https://github.com/Gluejar/regluit.git"
-git_branch: "production"
+# Corrected 2026-06-16: was "production" (stale) but the live box has always run
+# the test.unglue.it branch. A deploy with the old value would force-checkout the
+# wrong (Django 1.11 production) code. See runbook §0.8.
+git_branch: "test.unglue.it"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 #le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
 alt_server_name: ""
