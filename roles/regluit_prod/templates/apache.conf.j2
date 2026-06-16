@@ -36,6 +36,14 @@ SSLCertificateKeyFile /etc/letsencrypt/live/{{ server_name }}/privkey.pem
 
 WSGIDaemonProcess regluit processes=2 threads=15 python-eggs=/tmp/regluit-python-eggs
 WSGIScriptAlias / /opt/regluit/deploy/prod.wsgi
+# Run the app in the MAIN Python interpreter, not a mod_wsgi sub-interpreter.
+# Django 4.x template-based form rendering (RenderableMixin) misbehaves in
+# sub-interpreters: empty form error lists ({{ form.x.errors }},
+# {{ form.non_field_errors }}) stringify to a literal "[]" instead of "".
+# Reproduced on Django 4.2.21 under mod_wsgi 5.0.0 (regluit#1163); fixed by
+# forcing the global/main interpreter. Harmless for a single-app daemon and a
+# long-standing mod_wsgi best practice for C-extension/threading correctness.
+WSGIApplicationGroup %{GLOBAL}
 
 # --- Maintenance mode (flag-file toggle; no apache reload needed) ----------
 # ON:   sudo touch /var/www/maintenance/MAINTENANCE_ON
