@@ -42,11 +42,11 @@ mysql_db_name: "{{ vault_mysql_db_name }}"
 mysql_db_user: "{{ vault_mysql_db_user }}"
 mysql_db_pass: "{{ vault_mysql_db_pass }}"
 # Override 2026-06-16: vault_mysql_db_host is stale (points at the deleted
-# dj42-2026-04-28 snapshot -> NXDOMAIN -> migrate fails). The live dj42 RDS is the
-# 6/11 rebuild. Plaintext override here (same pattern prod-green uses); the vault
+# dj42-2026-04-28 snapshot). Rebuilt fresh from prod snapshot 2026-06-17. The dj42 RDS is the
+# current rebuild. Plaintext override here (same pattern prod-green uses); the vault
 # value should be refreshed separately. Endpoint is a VPC-internal hostname, not a
-# credential. AWS-confirmed: status 'available', resolves to 10.0.1.30.
-mysql_db_host: "dj42-2026-06-11.cboagmr25pjs.us-east-1.rds.amazonaws.com"
+# credential. AWS-confirmed: status available.
+mysql_db_host: "dj42-2026-06-17.cboagmr25pjs.us-east-1.rds.amazonaws.com"
 mysql_db_port: ""
 email_host: "{{ vault_email_host }}"
 email_port: 587
