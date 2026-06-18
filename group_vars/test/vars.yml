@@ -3,8 +3,14 @@
 ### Sensitive vars are references to actual values in vault.yml   ###
 ### Use ansible-vault view vault.yml to see the secret values     ###
 
-python_version: "3.8"
-celery_major_version: 4
+# Flipped to the Django 4.2 stack 2026-06-18 (cc) to prep the test.unglue.it
+# 4.2 rebuild — mirrors the proven dj42 staging recipe (py3.12 / celery5).
+# NOTE: the regluit `test.unglue.it` branch (git_branch below) is still OLD-STACK
+# 1.11 code; it MUST be brought to 4.2 (rebase/merge the upgrade onto it, as dj42's
+# branch was) BEFORE the rebuild — otherwise this provisions 1.11 on Py3.12 = broken.
+# The rebuild also needs a fresh test RDS + mysql_db_host filled in at build time.
+python_version: "3.12"
+celery_major_version: 5
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
 virtualenv_name: "venv"
