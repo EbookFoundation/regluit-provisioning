@@ -22,7 +22,7 @@ git_repo: "https://github.com/Gluejar/regluit.git"
 # Corrected 2026-06-16: was "production" (stale) but the live box has always run
 # the test.unglue.it branch. A deploy with the old value would force-checkout the
 # wrong (Django 1.11 production) code. See runbook §0.8.
-git_branch: "test.unglue.it"
+git_branch: "master"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 #le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
 alt_server_name: ""
@@ -32,7 +32,8 @@ deploy_type: 'test'
 # The previous shared wildcard cert was revoked 2026-04-21 (key compromise,
 # see EbookFoundation/security-private#10). Per-host key/CSR are now
 # vault-encrypted in private/test.unglue.it.{key,csr}.
-manage_certs: true
+manage_certs: false   # box holds a certbot DNS-01 cert (issued at 2026-06-18 rebuild).
+                       # FOLLOW-UP: DNS-01 renewal needs route53 creds in the timer env, like prod (#1075).
 
 # Non-production environment: suppress error emails to prod admins.
 # See EbookFoundation/security-private#11.
@@ -42,7 +43,10 @@ disable_admin_emails: true
 mysql_db_name: "{{ vault_mysql_db_name }}"
 mysql_db_user: "{{ vault_mysql_db_user }}"
 mysql_db_pass: "{{ vault_mysql_db_pass }}"
-mysql_db_host: "{{ vault_mysql_db_host }}"
+# SAFETY-CRITICAL OVERRIDE (build 2026-06-18): point at the NEW test RDS so this
+# rebuild can NEVER migrate the old test-2024 RDS or (worse) prod. Reverts to
+# vault_mysql_db_host once the box is the canonical test host.
+mysql_db_host: "test-2026-06-18.cboagmr25pjs.us-east-1.rds.amazonaws.com"
 mysql_db_port: ""
 email_host: "{{ vault_email_host }}"
 email_port: 587
