@@ -1,0 +1,101 @@
+# deploy.yml — code-only deploy for unglue.it (refs Gluejar/regluit#1170)
+#
+# PURPOSE
+#   Fast, rule-compliant CODE deploy: pull the configured branch onto the box and
+#   restart the app + workers. This is the "normal hotfix flow" — it deliberately
+#   does NOT touch the database, TLS certs, or the rendered settings templates.
+#
+#   For a full (re)provision — deps, settings render, certs, migrate — use
+#   setup-prod.yml (the full regluit_prod role). Use THIS playbook only when the
+#   change is code that's already merged to the deploy branch.
+#
+# WHAT IT DOES (default)
+#   1. git checkout {{ git_branch }} (force) into {{ project_path }}
+#   2. restart apache2, celeryd, celerybeat
+#   3. print the deployed SHA so you can verify  deployed == branch tip
+#
+# WHAT IT DOES NOT DO (by design — "no DB / no cert")
+#   - migrate            (schema/data changes go through a full setup-prod.yml run)
+#   - certs              (TLS is provisioning, not deploy)
+#   - settings re-render (prod.py / keys are provisioning, not deploy)
+#
+# OPTIONAL STEPS (off by default — opt in only when the change needs them)
+#   -e run_pip=true            reinstall requirements.txt (a dep changed)
+#   -e run_collectstatic=true  rebuild static assets (static/ JS/CSS/img changed)
+#
+# USAGE
+#   ansible-playbook -i hosts deploy.yml                      # code-only, prod
+#   ansible-playbook -i hosts deploy.yml -e run_collectstatic=true
+#   ansible-playbook -i hosts deploy.yml --check --diff       # dry run first
+#   ansible-playbook -i hosts deploy.yml -e git_branch=hotfix/x   # ad-hoc branch
+#
+#   Target host + branch come from group_vars/production (git_branch: "production").
+#
+# ROLLBACK
+#   Re-run with -e git_branch=<previous tag/SHA/branch>, or (blue/green) flip the
+#   Elastic IP back to blue. This playbook is idempotent and reversible.
+
+- hosts: regluit-prod
+  gather_facts: false
+
+  vars:
+    run_pip: false
+    run_collectstatic: false
+
+  tasks:
+    - name: Show what is about to deploy
+      debug:
+        msg: >-
+          Deploying repo={{ git_repo }} branch={{ git_branch }}
+          to {{ inventory_hostname }}:{{ project_path }}
+          (run_pip={{ run_pip }}, run_collectstatic={{ run_collectstatic }})
+
+    - name: Checkout regluit repo (code-only)
+      git:
+        accept_hostkey: yes
+        force: yes
+        repo: "{{ git_repo }}"
+        dest: "{{ project_path }}"
+        version: "{{ git_branch }}"
+      register: checkout
+
+    # OPTIONAL — only when a dependency changed (not strictly "code-only")
+    - name: Install python packages to virtualenv
+      pip:
+        requirements: "{{ project_path }}/requirements.txt"
+        state: latest
+        virtualenv: "{{ project_path }}/venv"
+      when: run_pip | bool
+
+    # OPTIONAL — only when static assets (static/ JS/CSS/img) changed
+    - name: Generate static files
+      django_manage:
+        app_path: "{{ project_path }}"
+        command: "collectstatic"
+        virtualenv: "{{ project_path }}/venv"
+        settings: "{{ django_settings_module }}"
+      when: run_collectstatic | bool
+
+    - name: Restart apache
+      become: yes
+      service:
+        name: apache2
+        state: restarted
+
+    - name: Restart celeryd
+      become: yes
+      service:
+        name: celeryd
+        state: restarted
+
+    - name: Restart celerybeat
+      become: yes
+      service:
+        name: celerybeat
+        state: restarted
+
+    - name: Report deployed revision
+      debug:
+        msg: >-
+          Deployed {{ git_branch }} @ {{ checkout.after | default('unknown') }}
+          (changed={{ checkout.changed }}). Verify this equals the branch tip on GitHub.
