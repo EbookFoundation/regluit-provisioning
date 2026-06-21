@@ -1,0 +1,14 @@
+---
+### Variables for the test.unglue.it staging server (deploy.yml / code-only) ###
+### Intentionally minimal & vault-free: deploy.yml does git checkout + restart   ###
+### only (no settings render / DB / certs), so no secret vars are needed here.    ###
+
+project_path: "/opt/regluit"
+django_settings_module: "regluit.settings.prod"
+user_name: "ubuntu"
+git_repo: "https://github.com/Gluejar/regluit.git"
+git_branch: "master"
+
+# Non-production environment: suppress error emails to prod admins.
+# See EbookFoundation/security-private#11.
+disable_admin_emails: true

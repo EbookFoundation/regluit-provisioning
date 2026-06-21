@@ -28,6 +28,8 @@
 #   ansible-playbook -i hosts deploy.yml -e run_collectstatic=true
 #   ansible-playbook -i hosts deploy.yml --check --diff       # dry run first
 #   ansible-playbook -i hosts deploy.yml -e git_branch=hotfix/x   # ad-hoc branch
+#   ansible-playbook -i hosts deploy.yml -e deploy_target=regluit-test   # deploy to test.unglue.it
+#   ansible-playbook -i hosts deploy.yml -e deploy_target=regluit-test -e git_branch=hotfix/x  # test a branch on staging
 #
 #   Target host + branch come from group_vars/production (git_branch: "production").
 #
@@ -35,7 +37,7 @@
 #   Re-run with -e git_branch=<previous tag/SHA/branch>, or (blue/green) flip the
 #   Elastic IP back to blue. This playbook is idempotent and reversible.
 
-- hosts: regluit-prod
+- hosts: "{{ deploy_target | default('regluit-prod') }}"
   gather_facts: false
 
   vars:
