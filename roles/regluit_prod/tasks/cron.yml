@@ -3,16 +3,22 @@
 # See: https://github.com/Gluejar/regluit/issues/1111 (disk/log management)
 # See: https://github.com/Gluejar/regluit/issues/1078 (bot traffic)
 
-# Workaround for memory pressure under heavy bot traffic
-# TODO: Remove once proper bot mitigation is in place (see issue #1078)
-- name: Restart Apache periodically (workaround for bot load)
+# REMOVED: the periodic `service apache2 restart` band-aid (Gluejar/regluit#1078).
+# Forensics on the 2026-06-22 OOM showed systemd's SIGKILL does NOT reap the
+# mod_wsgi daemon processes ("Unit process ... remains running after unit stopped",
+# "Found left-over process ... Ignoring"). Each restart spawned fresh workers while
+# the bloated old ones survived, accumulating to ~13.3 GB across ~6 orphaned workers
+# before the OOM. Proper, clean recycling is now handled by WSGIDaemonProcess
+# maximum-requests (see templates/apache.conf.j2), so this cron is not merely
+# unnecessary, it was actively harmful. state: absent removes it from any
+# already-provisioned box.
+- name: Remove obsolete apache-restart workaround cron
   become: yes
   ansible.builtin.cron:
     name: "apache-restart-workaround"
-    minute: "9,29,49"
-    hour: "*"
-    job: "service apache2 restart"
+    state: absent
     user: root
+  tags: [apache-restart-cleanup, oom-hardening]
 
 # Apache access logs can reach 1GB/day under bot traffic.
 # cronolog creates dated files but doesn't clean them up.

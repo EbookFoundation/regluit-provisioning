@@ -114,6 +114,7 @@
 
 - name: Configure swap (memory-pressure cushion)
   import_tasks: swap.yml
+  tags: [swap, oom-hardening]
 
 - name: Run redis tasks
   import_tasks: redis.yml
@@ -135,6 +136,7 @@
 
 - name: Run monitoring tasks (memory alert)
   import_tasks: monitoring.yml
+  tags: [monitoring, oom-hardening]
 
 - name: Run log management tasks
   import_tasks: log_management.yml
