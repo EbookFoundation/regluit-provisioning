@@ -4,7 +4,8 @@
 # Managed by Ansible (regluit_prod). See Gluejar/regluit#1078.
 #
 # Dedup: alerts once per low-memory episode (flag in /run, cleared on recovery
-# and on reboot) so a sustained dip doesn't spam every 5 minutes.
+# and on reboot) so a sustained dip doesn't spam every 5 minutes. The flag is set
+# only after a successful send, so a transient mail failure is retried next run.
 
 set -u
 THRESH_PCT={{ mem_alert_threshold_pct | default(12) }}
@@ -15,28 +16,34 @@ HOST=$(hostname)
 
 MT=$(awk '/^MemTotal:/{print $2}' /proc/meminfo)
 MA=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
-[ -n "$MT" ] && [ "$MT" -gt 0 ] || exit 0
+# Bail quietly if either reading is missing/unusable.
+[ -n "$MT" ] && [ -n "$MA" ] && [ "$MT" -gt 0 ] || exit 0
 PCT=$(( 100 * MA / MT ))
 
-if [ "$PCT" -lt "$THRESH_PCT" ]; then
-    if [ ! -f "$FLAG" ]; then
-        {
-            echo "From: $FROM"
-            echo "To: $TO"
-            echo "Subject: [unglue.it] LOW MEMORY on ${HOST}: ${PCT}% available"
-            echo
-            echo "MemAvailable is ${PCT}% (alert threshold ${THRESH_PCT}%) on ${HOST} at $(date -u)."
-            echo "This is an early warning to avoid an OOM wedge (Gluejar/regluit#1078)."
-            echo
-            echo "Top memory consumers:"
-            ps -eo pid,user,pmem,rss,comm --sort=-rss | head -12
-            echo
-            echo "free -m:"
-            free -m
-        } | /usr/sbin/sendmail -t
-        touch "$FLAG"
-    fi
-else
+if [ "$PCT" -ge "$THRESH_PCT" ]; then
     # Recovered above threshold — clear the flag so the next dip alerts again.
     rm -f "$FLAG"
+    exit 0
+fi
+
+# Below threshold: alert once per episode.
+[ -f "$FLAG" ] && exit 0
+
+if {
+        echo "From: $FROM"
+        echo "To: $TO"
+        echo "Subject: [unglue.it] LOW MEMORY on ${HOST}: ${PCT}% available"
+        echo
+        echo "MemAvailable is ${PCT}% (alert threshold ${THRESH_PCT}%) on ${HOST} at $(date -u)."
+        echo "Early warning to avoid an OOM wedge (Gluejar/regluit#1078)."
+        echo
+        echo "Top memory consumers:"
+        ps -eo pid,user,pmem,rss,comm --sort=-rss | head -12
+        echo
+        echo "free -m:"
+        free -m
+    } | /usr/sbin/sendmail -t; then
+    touch "$FLAG"          # set dedup flag ONLY after a successful send
+else
+    logger -t mem_alert "sendmail failed; will retry next run"
 fi

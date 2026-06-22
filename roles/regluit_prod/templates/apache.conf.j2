@@ -27,8 +27,14 @@ SSLCertificateFile    /etc/ssl/certs/{{ server_name }}.crt
 SSLCertificateKeyFile /etc/ssl/private/server.key
 SSLCertificateChainFile /etc/ssl/certs/{{ server_name }}.ca-bundle
 
-WSGIDaemonProcess regluit processes=2 threads=15 maximum-requests={{ wsgi_maximum_requests | default(500) }} inactivity-timeout={{ wsgi_inactivity_timeout | default(300) }} python-eggs=/tmp/regluit-python-eggs
-WSGIScriptAlias / /opt/regluit/deploy/prod.wsgi
+WSGIDaemonProcess regluit processes=2 threads=15 maximum-requests={{ wsgi_maximum_requests | default(500) }} inactivity-timeout={{ wsgi_inactivity_timeout | default(300) }} graceful-timeout={{ wsgi_graceful_timeout | default(30) }} python-eggs=/tmp/regluit-python-eggs
+# Delegate the app to the "regluit" daemon process group so it runs in the
+# 2 managed daemon processes (where maximum-requests recycling applies),
+# NOT embedded in the apache mpm children. Without this the WSGIDaemonProcess
+# above is defined-but-unused and the app silently runs embedded
+# (root cause of the 2026-06-22 OOM; Gluejar/regluit#1078).
+WSGIScriptAlias / /opt/regluit/deploy/prod.wsgi process-group=regluit application-group=%{GLOBAL}
+WSGIProcessGroup regluit
 # Run the app in the MAIN Python interpreter, not a mod_wsgi sub-interpreter.
 # Django 4.x template-based form rendering (RenderableMixin) misbehaves in
 # sub-interpreters: empty form error lists (form.x.errors,

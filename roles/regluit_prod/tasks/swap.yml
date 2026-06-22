@@ -1,14 +1,11 @@
 ---
-# Swap file — memory-pressure cushion.
-# The box has NO swap by default, so a single bloated mod_wsgi worker can drive
-# the host straight into OOM/thrash and a hard wedge (sshd can't fork, apache
-# stops). A modest swapfile lets the kernel ride out spikes and lets the
-# OOM-killer act cleanly instead of the whole box locking up.
-# See Gluejar/regluit#1078 (memory pressure under bot/heavy traffic).
-#
-# This is a *cushion*, not the cure — the real fix is bounding worker growth
-# (WSGIDaemonProcess maximum-requests, see templates/apache.conf.j2). Keep
-# swappiness low so RAM stays primary and swap is used only under pressure.
+# Swap file — memory-pressure cushion (Gluejar/regluit#1078).
+# The box has NO swap by default, so a memory spike goes straight to OOM/thrash
+# and a hard wedge. A modest swapfile lets the kernel ride out spikes and the
+# OOM-killer act cleanly. This is a *cushion*, not the cure — the real fix is
+# daemon-mode worker recycling (WSGIDaemonProcess maximum-requests + the
+# WSGIProcessGroup delegation in templates/apache.conf.j2). Keep swappiness low
+# so RAM stays primary and swap is used only under pressure.
 
 - name: Create swap file ({{ swap_file_size_mb | default(4096) }} MB)
   become: yes
@@ -24,23 +21,30 @@
     group: root
     mode: "0600"
 
+# Idempotent format: only mkswap if the file has no swap signature yet.
+- name: Detect existing swap signature
+  become: yes
+  command: "blkid -p -s TYPE -o value {{ swap_file_path | default('/swapfile') }}"
+  register: swap_blkid
+  changed_when: false
+  failed_when: false
+
 - name: Format swap file
   become: yes
   command: "mkswap {{ swap_file_path | default('/swapfile') }}"
-  register: mkswap_result
-  changed_when: "'Setting up swapspace' in mkswap_result.stdout"
-  failed_when:
-    - mkswap_result.rc != 0
-    - "'already' not in mkswap_result.stderr"
+  when: "'swap' not in (swap_blkid.stdout | default(''))"
+
+# Idempotent activation: only swapon if this file isn't already an active swap.
+- name: Check active swap devices
+  become: yes
+  command: "swapon --show=NAME --noheadings"
+  register: swap_active
+  changed_when: false
 
 - name: Enable swap file now
   become: yes
   command: "swapon {{ swap_file_path | default('/swapfile') }}"
-  register: swapon_result
-  changed_when: swapon_result.rc == 0
-  failed_when:
-    - swapon_result.rc != 0
-    - "'already active' not in (swapon_result.stderr | lower)"
+  when: "(swap_file_path | default('/swapfile')) not in (swap_active.stdout | default(''))"
 
 - name: Persist swap in /etc/fstab
   become: yes
