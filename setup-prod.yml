@@ -11,7 +11,7 @@
   - name: Gathering Facts
     setup:
 
-  - include_role: 
+  - import_role:
       name: regluit_prod
   
   
