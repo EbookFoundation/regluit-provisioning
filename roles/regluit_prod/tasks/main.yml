@@ -112,6 +112,9 @@
     - '80'
     - '443'
 
+- name: Configure swap (memory-pressure cushion)
+  import_tasks: swap.yml
+
 - name: Run redis tasks
   import_tasks: redis.yml
 
@@ -129,6 +132,9 @@
 
 - name: Run cron tasks
   import_tasks: cron.yml
+
+- name: Run monitoring tasks (memory alert)
+  import_tasks: monitoring.yml
 
 - name: Run log management tasks
   import_tasks: log_management.yml

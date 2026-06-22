@@ -1,0 +1,60 @@
+---
+# Swap file — memory-pressure cushion.
+# The box has NO swap by default, so a single bloated mod_wsgi worker can drive
+# the host straight into OOM/thrash and a hard wedge (sshd can't fork, apache
+# stops). A modest swapfile lets the kernel ride out spikes and lets the
+# OOM-killer act cleanly instead of the whole box locking up.
+# See Gluejar/regluit#1078 (memory pressure under bot/heavy traffic).
+#
+# This is a *cushion*, not the cure — the real fix is bounding worker growth
+# (WSGIDaemonProcess maximum-requests, see templates/apache.conf.j2). Keep
+# swappiness low so RAM stays primary and swap is used only under pressure.
+
+- name: Create swap file ({{ swap_file_size_mb | default(4096) }} MB)
+  become: yes
+  command: "fallocate -l {{ swap_file_size_mb | default(4096) }}M {{ swap_file_path | default('/swapfile') }}"
+  args:
+    creates: "{{ swap_file_path | default('/swapfile') }}"
+
+- name: Secure swap file permissions (0600)
+  become: yes
+  ansible.builtin.file:
+    path: "{{ swap_file_path | default('/swapfile') }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Format swap file
+  become: yes
+  command: "mkswap {{ swap_file_path | default('/swapfile') }}"
+  register: mkswap_result
+  changed_when: "'Setting up swapspace' in mkswap_result.stdout"
+  failed_when:
+    - mkswap_result.rc != 0
+    - "'already' not in mkswap_result.stderr"
+
+- name: Enable swap file now
+  become: yes
+  command: "swapon {{ swap_file_path | default('/swapfile') }}"
+  register: swapon_result
+  changed_when: swapon_result.rc == 0
+  failed_when:
+    - swapon_result.rc != 0
+    - "'already active' not in (swapon_result.stderr | lower)"
+
+- name: Persist swap in /etc/fstab
+  become: yes
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    line: "{{ swap_file_path | default('/swapfile') }} none swap sw 0 0"
+    regexp: "^{{ swap_file_path | default('/swapfile') | regex_escape }}\\s"
+    state: present
+
+- name: Tune vm.swappiness (prefer RAM; swap only under pressure)
+  become: yes
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ vm_swappiness | default(10) }}"
+    state: present
+    sysctl_set: yes
+    reload: yes

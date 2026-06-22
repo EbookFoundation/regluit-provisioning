@@ -1,0 +1,21 @@
+---
+# Lightweight memory-pressure alerting (Gluejar/regluit#1078).
+# Emails admins when MemAvailable falls below a threshold so an impending OOM
+# wedge is caught early, instead of being discovered when the site is already down.
+
+- name: Install memory-alert script
+  become: yes
+  template:
+    src: mem_alert.sh.j2
+    dest: /usr/local/sbin/mem_alert.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule memory-alert check (every 5 min)
+  become: yes
+  ansible.builtin.cron:
+    name: "mem-alert"
+    minute: "*/5"
+    job: "/usr/local/sbin/mem_alert.sh"
+    user: root
