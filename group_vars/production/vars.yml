@@ -14,6 +14,13 @@ git_repo: "https://github.com/Gluejar/regluit.git"
 git_branch: "production"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 #le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
+# Certs are managed by certbot/Let's Encrypt, NOT by this role. apache.conf.j2
+# selects the certbot cert paths (/etc/letsencrypt/live/<server_name>/...) when
+# manage_certs is false. Verified live 2026-06-22: /etc/letsencrypt/live/unglue.it/
+# exists and the static /etc/ssl/certs/unglue.it.crt path does NOT — so this MUST
+# stay false or apache fails to start. (Was a runtime -e override at cutover; now
+# committed so master reflects production. Gluejar/regluit#1078 reconciliation.)
+manage_certs: false
 alt_server_name: "www.unglue.it"
 deploy_type: 'prod'
 

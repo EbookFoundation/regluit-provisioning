@@ -23,9 +23,16 @@ ServerAdmin info@ebookfoundation.org
 SSLEngine on
 SSLProtocol All -SSLv2 -SSLv3
 
+{% if manage_certs | default(true) %}
 SSLCertificateFile    /etc/ssl/certs/{{ server_name }}.crt
 SSLCertificateKeyFile /etc/ssl/private/server.key
 SSLCertificateChainFile /etc/ssl/certs/{{ server_name }}.ca-bundle
+{% else %}
+# Cert managed externally (e.g., by certbot's systemd timer). See the host's
+# group_vars/<env>/vars.yml comment on manage_certs for the rotation story.
+SSLCertificateFile    /etc/letsencrypt/live/{{ server_name }}/fullchain.pem
+SSLCertificateKeyFile /etc/letsencrypt/live/{{ server_name }}/privkey.pem
+{% endif %}
 
 WSGIDaemonProcess regluit processes=2 threads=15 maximum-requests={{ wsgi_maximum_requests | default(500) }} inactivity-timeout={{ wsgi_inactivity_timeout | default(300) }} graceful-timeout={{ wsgi_graceful_timeout | default(30) }} python-eggs=/tmp/regluit-python-eggs
 # Delegate the app to the "regluit" daemon process group so it runs in the
@@ -43,6 +50,25 @@ WSGIProcessGroup regluit
 # forcing the global/main interpreter. Harmless for a single-app daemon and a
 # long-standing mod_wsgi best practice for C-extension/threading correctness.
 WSGIApplicationGroup %{GLOBAL}
+
+# --- Maintenance mode (flag-file toggle; no apache reload needed) ----------
+# ON:   sudo touch /var/www/maintenance/MAINTENANCE_ON
+# OFF:  sudo rm /var/www/maintenance/MAINTENANCE_ON
+# While the flag file exists, every request (except the maintenance page
+# itself and /static/) gets a 503 + Retry-After, served as a static page
+# with no Django/WSGI/database involvement.
+Alias /maintenance.html /var/www/maintenance/maintenance.html
+<Directory /var/www/maintenance>
+  Require all granted
+</Directory>
+RewriteEngine On
+RewriteCond /var/www/maintenance/MAINTENANCE_ON -f
+RewriteCond %{REQUEST_URI} !^/maintenance\.html$
+RewriteCond %{REQUEST_URI} !^/static/
+RewriteRule ^ - [R=503,L]
+ErrorDocument 503 /maintenance.html
+Header always set Retry-After "600" "expr=%{REQUEST_STATUS} == 503"
+# ---------------------------------------------------------------------------
 
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
 # intermediate mode
