@@ -1,4 +1,15 @@
 ---
+# Gate the restart on a config syntax check. Defined BEFORE `restart apache`
+# so it runs first (handlers fire in definition order). If apache2ctl
+# configtest fails on the freshly-rendered config, the play aborts here and
+# `restart apache` never runs — apache keeps serving the old in-memory config
+# instead of being restarted into a broken one. (Codex-recommended OOM-apply
+# safety, Gluejar/regluit#1078.)
+- name: validate apache config
+  become: yes
+  command: apache2ctl configtest
+  changed_when: false
+
 - name: restart apache
   become: yes
   service:

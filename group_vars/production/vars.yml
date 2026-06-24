@@ -10,10 +10,25 @@ user_name: "ubuntu"
 server_name: "unglue.it"
 wsgi_home: "/opt/regluit/venv"
 wsgi_python_path: "/opt/regluit/venv/bin/python3"
+# mod_wsgi daemon-mode worker recycling (Gluejar/regluit#1078, provisioning#45).
+# Tuned from prod traffic 2026-06-24: ~722 dynamic req/min across processes=2 =>
+# ~361 req/min/process. 8000 => ~22 min/process lifetime, near the proven-safe
+# cadence of the old 20-min restart band-aid but graceful/rolling. Self-regulating:
+# recycles faster under heavier load. The template default (500) would recycle every
+# ~80s here (cold-start churn) — DO NOT use the default on prod. Watch RSS/proc +
+# PID turnover after apply and retune.
+wsgi_maximum_requests: 8000
 git_repo: "https://github.com/Gluejar/regluit.git"
 git_branch: "production"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
 #le_endpoint: https://acme-staging-v02.api.letsencrypt.org/directory
+# Certs are managed by certbot/Let's Encrypt, NOT by this role. apache.conf.j2
+# selects the certbot cert paths (/etc/letsencrypt/live/<server_name>/...) when
+# manage_certs is false. Verified live 2026-06-22: /etc/letsencrypt/live/unglue.it/
+# exists and the static /etc/ssl/certs/unglue.it.crt path does NOT — so this MUST
+# stay false or apache fails to start. (Was a runtime -e override at cutover; now
+# committed so master reflects production. Gluejar/regluit#1078 reconciliation.)
+manage_certs: false
 alt_server_name: "www.unglue.it"
 deploy_type: 'prod'
 
