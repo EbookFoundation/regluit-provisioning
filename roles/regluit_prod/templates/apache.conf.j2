@@ -34,7 +34,7 @@ SSLCertificateFile    /etc/letsencrypt/live/{{ server_name }}/fullchain.pem
 SSLCertificateKeyFile /etc/letsencrypt/live/{{ server_name }}/privkey.pem
 {% endif %}
 
-WSGIDaemonProcess regluit processes=2 threads=15 maximum-requests={{ wsgi_maximum_requests | default(500) }} inactivity-timeout={{ wsgi_inactivity_timeout | default(300) }} graceful-timeout={{ wsgi_graceful_timeout | default(30) }} python-eggs=/tmp/regluit-python-eggs
+WSGIDaemonProcess regluit processes=2 threads=15 maximum-requests={{ wsgi_maximum_requests | default(500) }} inactivity-timeout={{ wsgi_inactivity_timeout | default(300) }} graceful-timeout={{ wsgi_graceful_timeout | default(30) }} display-name=%{GROUP} python-eggs=/tmp/regluit-python-eggs
 # Delegate the app to the "regluit" daemon process group so it runs in the
 # 2 managed daemon processes (where maximum-requests recycling applies),
 # NOT embedded in the apache mpm children. Without this the WSGIDaemonProcess

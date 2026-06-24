@@ -21,7 +21,9 @@
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0664
-  notify: 
+    backup: yes
+  notify:
+    - validate apache config
     - restart apache
 
 - name: Create static directory
