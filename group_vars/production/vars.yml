@@ -18,6 +18,12 @@ wsgi_python_path: "/opt/regluit/venv/bin/python3"
 # ~80s here (cold-start churn) — DO NOT use the default on prod. Watch RSS/proc +
 # PID turnover after apply and retune.
 wsgi_maximum_requests: 8000
+# Daemon-mode CPU parallelism. The box has 4 vCPUs; processes=2 (the inherited
+# value) GIL-caps the app at ~2 cores while 2 sit idle, causing CPU-bound
+# slowness under bot load (observed 2026-06-24: load ~4.6, 2 procs @ ~115% CPU,
+# 7-11s responses). processes=4 uses all cores, ~restoring embedded-mode
+# parallelism while keeping recycling + memory bounds. Gluejar/regluit#1078, #45.
+wsgi_processes: 4
 git_repo: "https://github.com/Gluejar/regluit.git"
 git_branch: "production"
 le_endpoint: https://acme-v02.api.letsencrypt.org/directory
