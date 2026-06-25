@@ -1,0 +1,29 @@
+# Unified setup playbook for all regluit environments.
+#
+# Usage:
+#   ansible-playbook setup.yml -l regluit-prod      # production (unglue.it)
+#   ansible-playbook setup.yml -l regluit-test       # test.unglue.it
+#   ansible-playbook setup.yml -l regluit-dj42      # dj42.unglue.it (Django 4.2 staging)
+#   ansible-playbook setup.yml -l regluit-dev        # m.unglue.it (legacy)
+#
+# Each environment is configured via group_vars/<group>/vars.yml and vault.yml.
+# To add a new environment:
+#   1. Add host entry to 'hosts' inventory file
+#   2. Create group_vars/<group>/vars.yml (copy from an existing env, adjust)
+#   3. Create group_vars/<group>/vault.yml (ansible-vault create)
+#   4. Run: ansible-playbook setup.yml -l regluit-<name>
+
+- hosts: all
+  gather_facts: false
+  tasks:
+  - name: Install python{{ python_version }} and pip
+    become: true
+    raw: bash -c "apt -qqy update && apt install -y python{{ python_version }} python3-pip python3-apt"
+    register: output
+    changed_when: output.stdout != ""
+
+  - name: Gathering Facts
+    setup:
+
+  - include_role:
+      name: regluit_prod

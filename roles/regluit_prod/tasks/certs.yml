@@ -1,15 +1,23 @@
 ---
-
-# create account key by hand on ansible host with (for example)
-# openssl genrsa -out private/letsencrypt_account.key 4096
+# Per-host TLS certificate issuance via Let's Encrypt (HTTP-01 challenge).
 #
-# create server key by hand on ansible host with (for example)
-# openssl genrsa -out private/{{ server_name }}.key 4096
+# Each host gets a cert tied to its own {{ server_name }}. Optionally covers
+# an {{ alt_server_name }} too (e.g., www.unglue.it alongside unglue.it).
 #
-# create a code signing request by hand on ansible host with (for example)
-# openssl req -new -sha256 -key private/{{ server_name }}.key -out {{ server_name }}.csr -subj /CN=m.unglue.it
-# 
-# make sure you have private/decrypted/ and private/certs/
+# Prerequisites (one-time per host, done manually on the Ansible control node):
+#   openssl genrsa -out private/letsencrypt_account.key 4096
+#   openssl genrsa -out private/{{ server_name }}.key 4096
+#   openssl req -new -sha256 -key private/{{ server_name }}.key \
+#     -out private/{{ server_name }}.csr \
+#     -subj "/CN={{ server_name }}"
+#   ansible-vault encrypt private/{{ server_name }}.key private/{{ server_name }}.csr
+#
+# Make sure private/decrypted/ and private/certs/ exist on the control node.
+#
+# To skip cert management for a given environment (e.g., when certs are
+# managed externally like by certbot running on the server), set
+# `manage_certs: false` in that environment's group_vars. The import in
+# tasks/main.yml already honors this flag.
 
 
 - name: Decrypt files
@@ -18,7 +26,7 @@
     dest:  private/decrypted/{{ item }}
   with_items:
     - 'letsencrypt_account.key'
-    - '{{ server_name }}.csr'    
+    - '{{ server_name }}.csr'
   delegate_to: 127.0.0.1
 
 - name: Make sure account exists and has given contacts. We agree to TOS.
@@ -34,7 +42,7 @@
 
 - name: Fetch certs
   become: yes
-  fetch: 
+  fetch:
     src: /etc/ssl/certs/{{ item }}
     dest: private/certs/{{ item }}
     flat: yes
@@ -51,7 +59,6 @@
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
     remaining_days: 45
-    force: yes  # change this to yes if you have fake certs
     select_crypto_backend: openssl
     csr: "private/decrypted/{{ server_name }}.csr"
     dest: "private/certs/{{ server_name }}.crt"
@@ -62,7 +69,7 @@
 
 - name: Create .well-known directory
   become: yes
-  file: 
+  file:
     path: "/var/www/static/.well-known"
     state: directory
     owner: "{{ user_name }}"
@@ -71,7 +78,7 @@
 
 - name: Create acme-challenge directory
   become: yes
-  file: 
+  file:
     path: "/var/www/static/.well-known/acme-challenge"
     state: directory
     owner: "{{ user_name }}"
@@ -80,7 +87,7 @@
 
 - name: Create .well-known directory for fresh server
   become: yes
-  file: 
+  file:
     path: "/var/www/html/.well-known"
     state: directory
     owner: "{{ user_name }}"
@@ -89,7 +96,7 @@
 
 - name: Create acme-challenge directory for fresh server
   become: yes
-  file: 
+  file:
     path: "/var/www/html/.well-known/acme-challenge"
     state: directory
     owner: "{{ user_name }}"
@@ -99,7 +106,7 @@
 - name: debug
   debug:
     msg: "{{ acme_challenge }}"
-  
+
 - name: copy main challenge
   copy:
     dest: /var/www/static/{{ acme_challenge['challenge_data'][server_name]['http-01']['resource'] }}
@@ -129,7 +136,6 @@
     account_key_src: private/decrypted/letsencrypt_account.key
     acme_directory: "{{ le_endpoint }}"
     acme_version: 2
-    force: no
     remaining_days: 45
     select_crypto_backend: openssl
     csr: "private/decrypted/{{ server_name }}.csr"
@@ -137,10 +143,10 @@
     fullchain_dest: "private/certs/{{ server_name }}.ca-bundle"
     data: "{{ acme_challenge }}"
   delegate_to: 127.0.0.1
-    
+
 - name: Copy certs
   become: yes
-  copy: 
+  copy:
     src: "private/certs/{{ item }}"
     dest: "/etc/ssl/certs/{{ item }}"
     owner: "{{ user_name }}"
@@ -149,20 +155,20 @@
   with_items:
     - '{{ server_name }}.crt'
     - '{{ server_name }}.ca-bundle'
-  notify: 
+  notify:
     - restart apache
   tags:
     - certs
 
 - name: Copy server key
   become: yes
-  copy: 
+  copy:
     src: "private/{{ server_name }}.key"
     dest: "/etc/ssl/private/server.key"
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0600
-  notify: 
+  notify:
     - restart apache
   tags:
     - certs
@@ -173,5 +179,5 @@
     state: file
   with_items:
     - 'letsencrypt_account.key'
-    - '{{ server_name }}.csr'    
+    - '{{ server_name }}.csr'
   delegate_to: 127.0.0.1

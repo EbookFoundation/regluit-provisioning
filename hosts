@@ -1,6 +1,8 @@
 [dev]
 regluit-dev ansible_host=m.unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
-[ondeck]
-regluit-ondeck ansible_host=ondeck.unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
+[test]
+regluit-test ansible_host=test.unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
+[dj42]
+regluit-dj42 ansible_host=54.165.7.142 ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3
 [production]
 regluit-prod ansible_host=unglue.it ansible_user=ubuntu ansible_python_interpreter=/usr/bin/python3

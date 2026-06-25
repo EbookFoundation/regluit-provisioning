@@ -1,8 +1,18 @@
 ---
+- name: Safety check - non-production deploys must not use production database
+  assert:
+    that:
+      - "deploy_type == 'prod' or 'production' not in mysql_db_host"
+    fail_msg: >
+      ABORTING: deploy_type={{ deploy_type }} but mysql_db_host={{ mysql_db_host }}
+      contains 'production'. Non-production environments must use their own database.
+      Check group_vars/{{ deploy_type }}/vault.yml vault_mysql_db_host.
+  when: deploy_type is defined
+
 - name: Install prod dependencies
   become: true
   apt:
-    name: ['git', 'python-setuptools', 'libxml2-dev', 'libxslt1-dev',  'python3-lxml', 'python-dev', 'python3-virtualenv', 'build-essential', 'libssl-dev', 'libffi-dev','mysql-client', 'libmysqlclient-dev', 'libcairo2', 'postfix', 'libjpeg-dev']
+    name: ['git', 'libxml2-dev', 'libxslt1-dev', 'python3-lxml', 'python3-dev', 'python3-virtualenv', 'build-essential', 'libssl-dev', 'libffi-dev', 'default-mysql-client', 'default-libmysqlclient-dev', 'libcairo2', 'postfix', 'libjpeg-dev', 'pkg-config']
     update_cache: true
     state: present
 
@@ -25,13 +35,13 @@
 - name: Install python packages to virtualenv
   pip:
     requirements: "{{ project_path }}/requirements.txt"
-    state: latest
+    state: present
     virtualenv: "{{ project_path }}/venv"
 
 - name: Add project to PYTHONPATH of virtualenv
   template:
     src: "{{ item }}.j2"
-    dest: "{{ project_path }}/venv/lib/python3.8/site-packages/{{ item }}"
+    dest: "{{ project_path }}/venv/lib/python{{ python_version }}/site-packages/{{ item }}"
   with_items:
     - 'regluit.pth'
     - 'opt.pth'
@@ -127,6 +137,7 @@
 
 - name: Run cert tasks
   import_tasks: certs.yml
+  when: manage_certs | default(true)
 
 - name: Run celery tasks
   import_tasks: celery.yml

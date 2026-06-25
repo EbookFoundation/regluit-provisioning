@@ -43,8 +43,8 @@ Currently we are using a static inventory file `hosts` to define target server h
 This means that the `hosts` file must be manually updated to reflect things such as DNS changes or additional hosts being added.  
 In the future, the static inventory file may be replaced with a dynamic inventory solution, such as ansible's [ec2 inventory script](http://docs.ansible.com/ansible/latest/user_guide/intro_dynamic_inventory.html#example-aws-ec2-external-inventory-script)  
 
-One important aspect of the `hosts` file is that it defines the groups which a host or hosts are a part of.   
-Currently, there is  one prod host called `regluit-prod` which is a member of the `production` group, and another called `regluit-ondeck` in the `ondeck` group intended to be a build target that can be swapped in to production.
+One important aspect of the `hosts` file is that it defines the groups which a host or hosts are a part of.
+Currently, the prod host is `regluit-prod` in the `production` group, with staging hosts `regluit-test` (`test` group) and `regluit-dj42` (`dj42` group, Django 4.2 staging).
 These designations are important, as the `setup-prod` playbook specifically targets the `regluit-prod` host, and only that host will inherit the variables in `group_vars/production/`.   
 
 ## Notes

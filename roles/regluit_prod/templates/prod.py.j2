@@ -1,4 +1,5 @@
 # coding=utf-8
+from django.core.exceptions import ImproperlyConfigured
 from .common import *
 
 ALLOWED_HOSTS = ['.unglue.it']
@@ -37,6 +38,14 @@ DATABASES = {
     }
 }
 
+# Safety check: non-production deploys must not use production database
+if '{{ deploy_type }}' != 'prod' and 'production' in DATABASES['default'].get('HOST', ''):
+    raise ImproperlyConfigured(
+        "deploy_type='{{ deploy_type }}' is connected to a production database "
+        "(HOST=%s). Non-production environments must use their own database. "
+        "Check vault_mysql_db_host in group_vars." % DATABASES['default']['HOST']
+    )
+
 TIME_ZONE = 'America/New_York'
 
 # settings for outbout email
@@ -51,7 +60,11 @@ EMAIL_PORT = '{{ email_port }}'
 DEFAULT_FROM_EMAIL = '{{ default_from_email }}'
 
 # send celery log to Python logging
+{% if celery_major_version | default(4) >= 5 %}
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+{% else %}
 WORKER_HIJACK_ROOT_LOGGER = False
+{% endif %}
 
 # Next step to try https
 #BASE_URL = 'http://{{ server_name }}'
@@ -122,26 +135,38 @@ STATIC_ROOT = '/var/www/static'
 #CKEDITOR_UPLOAD_PREFIX = 'https://unglue.it/static/media/'
 
 # start out with nothing scheduled
+{% if celery_major_version | default(4) >= 5 %}
+CELERY_BEAT_SCHEDULE = {}
+{% else %}
 CELERYBEAT_SCHEDULE = {}
+{% endif %}
 CELERY_LOG_DIR = '/var/log/celery'
 
 # decide which of the period tasks to add to the schedule
+{% if celery_major_version | default(4) >= 5 %}
+{% set sched = 'CELERY_BEAT_SCHEDULE' %}
+{% else %}
+{% set sched = 'CELERYBEAT_SCHEDULE' %}
+{% endif %}
 if '{{ deploy_type }}' == 'prod':
     # update the statuses of campaigns
-    CELERYBEAT_SCHEDULE['update_active_campaign_statuses'] = UPDATE_ACTIVE_CAMPAIGN_STATUSES
-    CELERYBEAT_SCHEDULE['report_new_ebooks'] = EBOOK_NOTIFICATIONS_JOB
-    CELERYBEAT_SCHEDULE['notify_ending_soon'] = NOTIFY_ENDING_SOON_JOB
-    CELERYBEAT_SCHEDULE['update_account_statuses'] = UPDATE_ACCOUNT_STATUSES
-    CELERYBEAT_SCHEDULE['notify_expiring_accounts'] = NOTIFY_EXPIRING_ACCOUNTS
-    CELERYBEAT_SCHEDULE['refresh_acqs'] = REFRESH_ACQS_JOB
-    CELERYBEAT_SCHEDULE['refresh_acqs'] = NOTIFY_UNCLAIMED_GIFTS
-    CELERYBEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
-    CELERYBEAT_SCHEDULE['periodic_cleanup'] = PERIODIC_CLEANUP
-    CELERYBEAT_SCHEDULE['emit_notices'] = EMIT_NOTICES
-    CELERYBEAT_SCHEDULE['feature_new_work'] = FEATURE_NEW_WORK
+    {{ sched }}['update_active_campaign_statuses'] = UPDATE_ACTIVE_CAMPAIGN_STATUSES
+    {{ sched }}['report_new_ebooks'] = EBOOK_NOTIFICATIONS_JOB
+    {{ sched }}['notify_ending_soon'] = NOTIFY_ENDING_SOON_JOB
+    {{ sched }}['update_account_statuses'] = UPDATE_ACCOUNT_STATUSES
+    {{ sched }}['notify_expiring_accounts'] = NOTIFY_EXPIRING_ACCOUNTS
+    {{ sched }}['refresh_acqs'] = REFRESH_ACQS_JOB
+    {{ sched }}['refresh_acqs'] = NOTIFY_UNCLAIMED_GIFTS
+    {{ sched }}['save_info_page'] = SAVE_INFO_PAGE
+    {{ sched }}['periodic_cleanup'] = PERIODIC_CLEANUP
+    {{ sched }}['emit_notices'] = EMIT_NOTICES
+    {{ sched }}['feature_new_work'] = FEATURE_NEW_WORK
 
-
+{% if celery_major_version | default(4) >= 5 %}
+CELERY_ACCEPT_CONTENT = ['json']
+{% else %}
 ACCEPT_CONTENT = ['pickle', 'json', 'msgpack', 'yaml']
+{% endif %}
 
 # set -- sandbox or production Amazon FPS?
 #AMAZON_FPS_HOST = "fps.sandbox.amazonaws.com"
