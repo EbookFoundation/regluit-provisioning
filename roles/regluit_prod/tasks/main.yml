@@ -58,11 +58,16 @@
     src: "{{ project_path }}/settings/dummy/__init__.py"
     dest: "{{ project_path }}/settings/keys/__init__.py"
     remote_src: yes
+  tags: [config]
 
 - name: Copy django settings template
   template:
     src: prod.py.j2
     dest: "{{ project_path }}/settings/prod.py"
+  tags: [config]
+  no_log: true          # renders vault secrets — never log content / never --diff
+  notify:
+    - restart apache
 
 - name: Copy key templates to keys directory
   template:
@@ -71,6 +76,10 @@
   with_items:
     - 'common.py'
     - 'host.py'
+  tags: [config]
+  no_log: true          # renders vault secrets (incl. STRIPE_SK) — never log / never --diff
+  notify:
+    - restart apache
 
 - name: Copy sysadmin scripts to home directory
   become: yes
