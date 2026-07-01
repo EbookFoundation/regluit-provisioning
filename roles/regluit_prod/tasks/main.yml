@@ -92,6 +92,7 @@
   with_items:
     - 'setup.sh'
     - 'dump.sh'
+  tags: [config]
 
 - name: Copy mysql config file
   become: yes
@@ -101,6 +102,8 @@
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0600
+  tags: [config]
+  no_log: true          # renders vault secret (mysql_db_pass) — never log content / never --diff
   with_items:
     - '.my.cnf'
 
