@@ -86,17 +86,20 @@
   template:
     src: "{{ item }}.j2"
     dest: "/home/{{ user_name }}/{{ item }}"
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
     mode: 0755
   with_items:
     - 'setup.sh'
     - 'dump.sh'
-    - '.my.cnf'
 
 - name: Copy mysql config file
   become: yes
   template:
     src: "{{ item }}.j2"
     dest: "/home/{{ user_name }}/{{ item }}"
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
     mode: 0600
   with_items:
     - '.my.cnf'
