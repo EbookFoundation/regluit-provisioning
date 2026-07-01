@@ -1,0 +1,78 @@
+#!/bin/bash
+# Nightly DB dump + sanity check. Runs dump.sh (the same script Eric/Raymond
+# run by hand) as a real automated backup, and alerts if the resulting file is
+# suspiciously small OR wasn't actually refreshed this run. Born from the
+# 2026-06/07 incident: dump.sh silently wrote a ~34-byte (essentially empty)
+# backup for an unknown length of time, due to a credentials-file permission
+# bug (Gluejar/regluit-provisioning#49/#50). A healthy dump is 300MB+; anything
+# under the floor -- or a file that wasn't touched this run -- almost
+# certainly means mysqldump failed again (auth, connectivity, disk space,
+# etc.) while a stale prior-night file sat there looking fine.
+#
+# Runs as {{ user_name }} (not root) deliberately -- that's the exact context
+# the permission bug only manifested under, so this exercises the real path.
+# The flag/lock files therefore live under this user's home dir, NOT /run
+# (which a non-root user can't write into).
+#
+# NOTE (acknowledged design gap, not fixed here): this is a freshness/sanity
+# check on a single overwritten local file, not a real backup retention
+# strategy -- there is exactly one dump on disk at any time, on the same box
+# as the data it backs up. Rotation / off-host copy is a follow-up, not in
+# scope for this fix.
+#
+# Dedup: alerts once per bad-dump episode (flag cleared on the next good dump).
+# Lock: flock prevents two overlapping runs (e.g. a slow dump + cron overlap).
+
+set -u
+MIN_SIZE_BYTES={{ dump_min_size_bytes | default(10000000) }}
+HOME_DIR="/home/{{ user_name }}"
+DUMP_FILE="${HOME_DIR}/unglue.it.sql.gz"
+LOG_FILE="${HOME_DIR}/dump_check.log"
+FLAG="${HOME_DIR}/.dump_check_alert.flag"
+LOCK_FILE="${HOME_DIR}/.dump_check.lock"
+TO="{{ mem_alert_email | default('notices@gluejar.com') }}"
+FROM="{{ default_from_email | default('notices@gluejar.com') }}"
+HOST=$(hostname)
+
+if ! exec 200>"$LOCK_FILE"; then
+    logger -t dump_check_alert "could not open lock file $LOCK_FILE -- skipping run"
+    exit 1
+fi
+flock -n 200 || exit 0   # a previous run is still in progress; skip this one
+
+START=$(date +%s)
+cd "$HOME_DIR" && ./dump.sh >"$LOG_FILE" 2>&1
+DUMP_RC=$?
+
+SIZE=$(stat -c %s "$DUMP_FILE" 2>/dev/null || echo 0)
+MTIME=$(stat -c %Y "$DUMP_FILE" 2>/dev/null || echo 0)
+FRESH=0
+[ "$MTIME" -ge "$START" ] && FRESH=1
+
+if [ "$DUMP_RC" -eq 0 ] && [ "$SIZE" -ge "$MIN_SIZE_BYTES" ] && [ "$FRESH" -eq 1 ]; then
+    rm -f "$FLAG"
+    exit 0
+fi
+
+[ -f "$FLAG" ] && exit 0
+
+if {
+        echo "From: $FROM"
+        echo "To: $TO"
+        echo "Subject: [unglue.it] dump.sh failed or produced a bad backup on ${HOST}"
+        echo
+        echo "dump.sh run at $(date -u) on ${HOST}: exit=${DUMP_RC}, size=${SIZE} bytes"
+        echo "(floor ${MIN_SIZE_BYTES}), file-refreshed-this-run=${FRESH}."
+        echo
+        echo "If file-refreshed=0, the dump command failed before writing anything new"
+        echo "and you're looking at a STALE file from a previous successful night --"
+        echo "this is the same failure signature as the 2026-06/07 credentials-"
+        echo "permission bug (Gluejar/regluit-provisioning#49/#50)."
+        echo
+        echo "dump.sh output:"
+        cat "$LOG_FILE"
+    } | /usr/sbin/sendmail -t; then
+    touch "$FLAG"
+else
+    logger -t dump_check_alert "sendmail failed; will retry next run"
+fi

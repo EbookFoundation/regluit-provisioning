@@ -1,10 +1,33 @@
 #!/bin/bash
+# Dump the production DB to a gzipped SQL file. Only replaces the previous
+# good dump on success -- a failed mysqldump no longer silently overwrites a
+# working backup with an empty/partial one. Closes the remaining gap from
+# Gluejar/regluit-provisioning#49/#50 (a credentials-permission bug caused
+# silent near-empty dumps for an unknown period): that fixed the permission
+# bug itself, but mysqldump's exit code was still never checked, so a
+# *different* future failure could still silently clobber a good backup.
+set -u
 HOST={{ mysql_db_host }}
 USER={{ mysql_db_user }}
 DATABASE={{ mysql_db_name }}
 DB_FILE=unglue.it.sql
+TMP_FILE="${DB_FILE}.tmp"
 
 echo "Dump all"
-mysqldump --hex-blob --host=${HOST} --user=${USER}  --single-transaction --no-tablespaces --column-statistics=0 --set-gtid-purged=OFF ${DATABASE} > ${DB_FILE}
+mysqldump --hex-blob --host=${HOST} --user=${USER} --single-transaction --no-tablespaces --column-statistics=0 --set-gtid-purged=OFF ${DATABASE} > "${TMP_FILE}"
+RC=$?
+
+if [ $RC -ne 0 ]; then
+    echo "mysqldump failed (exit ${RC}) -- leaving previous good dump in place"
+    rm -f "${TMP_FILE}"
+    exit $RC
+fi
+
 echo "gzip the file"
-gzip -f ${DB_FILE}
+if ! gzip -c "${TMP_FILE}" > "${TMP_FILE}.gz"; then
+    echo "gzip failed -- leaving previous good dump in place"
+    rm -f "${TMP_FILE}" "${TMP_FILE}.gz"
+    exit 1
+fi
+rm -f "${TMP_FILE}"
+mv "${TMP_FILE}.gz" "${DB_FILE}.gz"
