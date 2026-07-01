@@ -19,3 +19,63 @@
     minute: "*/5"
     job: "/usr/local/sbin/mem_alert.sh"
     user: root
+
+# --- 2026-07-01 observability additions ---
+# Three silent-failure patterns surfaced in one incident this session (dump.sh
+# writing an empty backup, the box going 9+ days without a needed reboot,
+# celery beat crashing and never restarting) -- none of which tripped existing
+# monitoring, because the site kept responding 200 the whole time. These three
+# checks target exactly those gaps.
+
+- name: Install celery beat/worker aliveness alert script
+  become: yes
+  template:
+    src: celery_alert.sh.j2
+    dest: /usr/local/sbin/celery_alert.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule celery aliveness check (every 5 min)
+  become: yes
+  ansible.builtin.cron:
+    name: "celery-alert"
+    minute: "*/5"
+    job: "/usr/local/sbin/celery_alert.sh"
+    user: root
+
+- name: Install stale reboot-required alert script
+  become: yes
+  template:
+    src: reboot_required_alert.sh.j2
+    dest: /usr/local/sbin/reboot_required_alert.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule stale reboot-required check (hourly)
+  become: yes
+  ansible.builtin.cron:
+    name: "reboot-required-alert"
+    minute: "45"
+    hour: "*"
+    job: "/usr/local/sbin/reboot_required_alert.sh"
+    user: root
+
+- name: Install nightly DB dump + sanity check script
+  become: yes
+  template:
+    src: dump_check.sh.j2
+    dest: /usr/local/sbin/dump_check.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule nightly DB dump + sanity check (05:15 UTC)
+  become: yes
+  ansible.builtin.cron:
+    name: "dump-check"
+    minute: "15"
+    hour: "5"
+    user: "{{ user_name }}"
+    job: "/usr/local/sbin/dump_check.sh"

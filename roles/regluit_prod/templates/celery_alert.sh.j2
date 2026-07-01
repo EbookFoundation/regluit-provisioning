@@ -1,0 +1,49 @@
+#!/bin/bash
+# Celery beat/worker aliveness alert — emails admins if either service is not
+# active, so a crash is caught within minutes instead of by accident days later.
+# Managed by Ansible (regluit_prod). Born from the 2026-07-01 incident: celery
+# beat crashed 2026-06-26 (SystemExit, no Restart= policy configured) and sat
+# dead for 5+ days undetected — every scheduled job (metrics, notifications,
+# campaign status updates) silently stopped firing. See
+# Gluejar/regluit-provisioning#53 (the Restart=always fix) — this alert is the
+# backstop in case a future failure mode isn't caught by that fix either.
+#
+# Dedup: alerts once per down-episode (flag in /run, cleared on recovery/reboot).
+
+set -u
+FLAG=/run/celery_alert.flag
+TO="{{ mem_alert_email | default('notices@gluejar.com') }}"
+FROM="{{ default_from_email | default('notices@gluejar.com') }}"
+HOST=$(hostname)
+
+DOWN=""
+for svc in celerybeat celeryd; do
+    systemctl is-active --quiet "$svc" || DOWN="$DOWN $svc"
+done
+
+if [ -z "$DOWN" ]; then
+    rm -f "$FLAG"
+    exit 0
+fi
+
+[ -f "$FLAG" ] && exit 0
+
+if {
+        echo "From: $FROM"
+        echo "To: $TO"
+        echo "Subject: [unglue.it] Celery service(s) DOWN on ${HOST}:${DOWN}"
+        echo
+        echo "The following celery service(s) are not active on ${HOST} at $(date -u):${DOWN}"
+        echo "This means scheduled jobs (daily metrics, expiring-account notices,"
+        echo "campaign status updates, etc.) are NOT running."
+        echo
+        for svc in celerybeat celeryd; do
+            echo "--- systemctl status $svc ---"
+            systemctl status "$svc" --no-pager -l | head -15
+            echo
+        done
+    } | /usr/sbin/sendmail -t; then
+    touch "$FLAG"
+else
+    logger -t celery_alert "sendmail failed; will retry next run"
+fi

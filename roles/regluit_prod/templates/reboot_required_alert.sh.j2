@@ -1,0 +1,51 @@
+#!/bin/bash
+# Stale reboot-required alert — emails admins if /var/run/reboot-required has
+# existed longer than a threshold, meaning unattended-upgrades' Automatic-Reboot
+# (Gluejar/regluit-provisioning#52) didn't fire or was skipped, and a security
+# patch (often kernel) is sitting installed-but-inactive. Born from the
+# 2026-07-01 incident: the box went 9+ days without a reboot after a kernel
+# security update, with nobody noticing until the login banner was read by hand.
+#
+# Dedup: alerts once per stale-episode (flag in /run, cleared when the reboot
+# finally happens and reboot-required disappears, or on our own reboot).
+
+set -u
+THRESH_HOURS={{ reboot_required_alert_threshold_hours | default(30) }}
+REBOOT_FLAG=/var/run/reboot-required
+ALERT_FLAG=/run/reboot_required_alert.flag
+TO="{{ mem_alert_email | default('notices@gluejar.com') }}"
+FROM="{{ default_from_email | default('notices@gluejar.com') }}"
+HOST=$(hostname)
+
+if [ ! -f "$REBOOT_FLAG" ]; then
+    rm -f "$ALERT_FLAG"
+    exit 0
+fi
+
+AGE_SEC=$(( $(date +%s) - $(stat -c %Y "$REBOOT_FLAG") ))
+AGE_HOURS=$(( AGE_SEC / 3600 ))
+
+if [ "$AGE_HOURS" -lt "$THRESH_HOURS" ]; then
+    exit 0
+fi
+
+[ -f "$ALERT_FLAG" ] && exit 0
+
+if {
+        echo "From: $FROM"
+        echo "To: $TO"
+        echo "Subject: [unglue.it] Reboot required for ~${AGE_HOURS}h on ${HOST} -- auto-reboot may have failed"
+        echo
+        echo "${REBOOT_FLAG} has existed for ~${AGE_HOURS}h on ${HOST} (alert threshold ${THRESH_HOURS}h)."
+        echo "Automatic-Reboot is configured for 02:00 UTC daily; this age suggests it"
+        echo "either didn't fire or was deferred."
+        echo
+        echo "Packages requiring reboot:"
+        cat "${REBOOT_FLAG}.pkgs" 2>/dev/null || echo "(none listed)"
+        echo
+        echo "Manual fix if needed: sudo reboot at a safe time."
+    } | /usr/sbin/sendmail -t; then
+    touch "$ALERT_FLAG"
+else
+    logger -t reboot_required_alert "sendmail failed; will retry next run"
+fi
