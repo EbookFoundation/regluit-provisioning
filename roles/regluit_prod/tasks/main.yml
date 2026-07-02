@@ -77,9 +77,11 @@
 # recurrence of the silent 2026-06-26 revert (provisioning#37, regluit#1140).
 # Matches only setting NAMES — no secret values touch the log.
 - name: Verify rendered settings carry the 4-job Beat schedule (Celery-5 name)
+  # NOTE: no single-quotes anywhere in this command — a lone quote (e.g. in a
+  # grep pattern) breaks Ansible free-form arg splitting at parse time.
   shell: |
     set -e
-    test "$(grep -c "CELERY_BEAT_SCHEDULE\['" {{ project_path }}/settings/prod.py)" -eq 4
+    test "$(grep -c "CELERY_BEAT_SCHEDULE\[" {{ project_path }}/settings/prod.py)" -eq 4
     ! grep -q "CELERYBEAT_SCHEDULE" {{ project_path }}/settings/prod.py
   changed_when: false
   tags: [config]
