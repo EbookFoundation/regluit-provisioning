@@ -43,6 +43,11 @@
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0664
+  no_log: true          # renders vault secrets (host_keys: SECRET_KEY, AWS, SES,
+                        # OAuth, Turnstile) as env exports — never log / never --diff.
+                        # This was the ONE secret-rendering task missing no_log;
+                        # a `--check --diff` drift audit leaked all of them into an
+                        # AI transcript on 2026-07-01 (security-private incident).
 
 - name: Remove apache2 logrotate file
   become: yes
