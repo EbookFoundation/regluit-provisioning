@@ -21,3 +21,19 @@
   ansible.builtin.service:
     name: systemd-journald
     state: restarted
+
+# Celery services load Django settings at startup only. Without these
+# handlers, a settings re-render never reaches beat/workers — which is how
+# the 2026-06-26 schedule revert sat invisible until beat happened to
+# restart on 2026-07-01 (provisioning#37, regluit#1140).
+- name: restart celeryd
+  become: yes
+  ansible.builtin.service:
+    name: celeryd
+    state: restarted
+
+- name: restart celerybeat
+  become: yes
+  ansible.builtin.service:
+    name: celerybeat
+    state: restarted

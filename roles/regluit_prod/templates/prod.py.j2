@@ -1,4 +1,5 @@
 # coding=utf-8
+from django.core.exceptions import ImproperlyConfigured
 from .common import *
 
 ALLOWED_HOSTS = ['.unglue.it']
@@ -37,6 +38,16 @@ DATABASES = {
     }
 }
 
+# Safety check: non-production deploys must not use production database
+# (deploy_type defaults to 'nonprod' — the SAFE direction: guard active, no
+# Beat schedule — for legacy targets like ondeck/batterup that never define it)
+if '{{ deploy_type | default('nonprod') }}' != 'prod' and 'production' in DATABASES['default'].get('HOST', ''):
+    raise ImproperlyConfigured(
+        "deploy_type='{{ deploy_type | default('nonprod') }}' is connected to a production database "
+        "(HOST=%s). Non-production environments must use their own database. "
+        "Check vault_mysql_db_host in group_vars." % DATABASES['default']['HOST']
+    )
+
 TIME_ZONE = 'America/New_York'
 
 # settings for outbout email
@@ -51,7 +62,11 @@ EMAIL_PORT = '{{ email_port }}'
 DEFAULT_FROM_EMAIL = '{{ default_from_email }}'
 
 # send celery log to Python logging
-WORKER_HIJACK_ROOT_LOGGER = False
+# NOTE: Celery 5 + config_from_object(namespace='CELERY') reads ONLY the
+# CELERY_-prefixed setting names; the old unprefixed names are silently
+# ignored (verified empirically on celery 5.4.0, 2026-07-01 — see
+# provisioning#37 / regluit#1140 for the incident this caused).
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 
 # Next step to try https
 #BASE_URL = 'http://{{ server_name }}'
@@ -122,26 +137,31 @@ STATIC_ROOT = '/var/www/static'
 #CKEDITOR_UPLOAD_PREFIX = 'https://unglue.it/static/media/'
 
 # start out with nothing scheduled
-CELERYBEAT_SCHEDULE = {}
+CELERY_BEAT_SCHEDULE = {}
 CELERY_LOG_DIR = '/var/log/celery'
 
 # decide which of the period tasks to add to the schedule
-if '{{ deploy_type }}' == 'prod':
-    # update the statuses of campaigns
-    CELERYBEAT_SCHEDULE['update_active_campaign_statuses'] = UPDATE_ACTIVE_CAMPAIGN_STATUSES
-    CELERYBEAT_SCHEDULE['report_new_ebooks'] = EBOOK_NOTIFICATIONS_JOB
-    CELERYBEAT_SCHEDULE['notify_ending_soon'] = NOTIFY_ENDING_SOON_JOB
-    CELERYBEAT_SCHEDULE['update_account_statuses'] = UPDATE_ACCOUNT_STATUSES
-    CELERYBEAT_SCHEDULE['notify_expiring_accounts'] = NOTIFY_EXPIRING_ACCOUNTS
-    CELERYBEAT_SCHEDULE['refresh_acqs'] = REFRESH_ACQS_JOB
-    CELERYBEAT_SCHEDULE['refresh_acqs'] = NOTIFY_UNCLAIMED_GIFTS
-    CELERYBEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
-    CELERYBEAT_SCHEDULE['periodic_cleanup'] = PERIODIC_CLEANUP
-    CELERYBEAT_SCHEDULE['emit_notices'] = EMIT_NOTICES
-    CELERYBEAT_SCHEDULE['feature_new_work'] = FEATURE_NEW_WORK
+if '{{ deploy_type | default('nonprod') }}' == 'prod':
+    # Beat schedule per RY/Eric decision 2026-06-11: only these four jobs run.
+    # (emit_notices verified safe: send queue measured 0 on the 2026-06-11 prod copy.)
+    CELERY_BEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
+    CELERY_BEAT_SCHEDULE['periodic_cleanup'] = PERIODIC_CLEANUP
+    CELERY_BEAT_SCHEDULE['emit_notices'] = EMIT_NOTICES
+    CELERY_BEAT_SCHEDULE['feature_new_work'] = FEATURE_NEW_WORK
+    # --- PARKED 2026-06-11 (campaign-era / unverified email senders) --------
+    # Re-enable deliberately, one at a time, after per-job verification.
+    # Audit trail: regluit#1140 (prune audit), provisioning#37 (dup-key bug).
+    #   update_active_campaign_statuses  (campaigns eliminated)
+    #   report_new_ebooks                (email; unverified recipients)
+    #   notify_ending_soon               (email; 0 campaigns ending within 7d)
+    #   update_account_statuses          (campaign-era housekeeping)
+    #   notify_expiring_accounts         (email; ~4 candidates measured)
+    #   refresh_acqs                     (never actually scheduled since Jan 2015:
+    #                                     dup-key typo ea5adba8 -- retire, don't revive)
+    #   notify_unclaimed_gifts           (email; 4 candidates; had been running
+    #                                     under the key 'refresh_acqs' since 2015)
 
-
-ACCEPT_CONTENT = ['pickle', 'json', 'msgpack', 'yaml']
+CELERY_ACCEPT_CONTENT = ['json']
 
 # set -- sandbox or production Amazon FPS?
 #AMAZON_FPS_HOST = "fps.sandbox.amazonaws.com"
