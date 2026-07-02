@@ -68,6 +68,21 @@
   no_log: true          # renders vault secrets — never log content / never --diff
   notify:
     - restart apache
+    - restart celeryd
+    - restart celerybeat
+
+# Because the render above is no_log (its diff is invisible), assert the
+# outcome we care about: the rendered file carries the 4-job Beat schedule
+# under the Celery-5 name and no ignored old-name remnant. Guards against a
+# recurrence of the silent 2026-06-26 revert (provisioning#37, regluit#1140).
+# Matches only setting NAMES — no secret values touch the log.
+- name: Verify rendered settings carry the 4-job Beat schedule (Celery-5 name)
+  shell: |
+    set -e
+    test "$(grep -c "CELERY_BEAT_SCHEDULE\['" {{ project_path }}/settings/prod.py)" -eq 4
+    ! grep -q "CELERYBEAT_SCHEDULE" {{ project_path }}/settings/prod.py
+  changed_when: false
+  tags: [config]
 
 - name: Copy key templates to keys directory
   template:
@@ -80,6 +95,8 @@
   no_log: true          # renders vault secrets (incl. STRIPE_SK) — never log / never --diff
   notify:
     - restart apache
+    - restart celeryd
+    - restart celerybeat
 
 - name: Copy sysadmin scripts to home directory
   become: yes
