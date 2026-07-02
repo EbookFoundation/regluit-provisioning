@@ -39,9 +39,11 @@ DATABASES = {
 }
 
 # Safety check: non-production deploys must not use production database
-if '{{ deploy_type }}' != 'prod' and 'production' in DATABASES['default'].get('HOST', ''):
+# (deploy_type defaults to 'nonprod' — the SAFE direction: guard active, no
+# Beat schedule — for legacy targets like ondeck/batterup that never define it)
+if '{{ deploy_type | default('nonprod') }}' != 'prod' and 'production' in DATABASES['default'].get('HOST', ''):
     raise ImproperlyConfigured(
-        "deploy_type='{{ deploy_type }}' is connected to a production database "
+        "deploy_type='{{ deploy_type | default('nonprod') }}' is connected to a production database "
         "(HOST=%s). Non-production environments must use their own database. "
         "Check vault_mysql_db_host in group_vars." % DATABASES['default']['HOST']
     )
@@ -139,7 +141,7 @@ CELERY_BEAT_SCHEDULE = {}
 CELERY_LOG_DIR = '/var/log/celery'
 
 # decide which of the period tasks to add to the schedule
-if '{{ deploy_type }}' == 'prod':
+if '{{ deploy_type | default('nonprod') }}' == 'prod':
     # Beat schedule per RY/Eric decision 2026-06-11: only these four jobs run.
     # (emit_notices verified safe: send queue measured 0 on the 2026-06-11 prod copy.)
     CELERY_BEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
