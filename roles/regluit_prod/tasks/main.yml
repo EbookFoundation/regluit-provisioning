@@ -168,7 +168,7 @@
 - name: Run cron tasks
   import_tasks: cron.yml
 
-- name: Run monitoring tasks (memory alert)
+- name: Run monitoring tasks (memory alert + wsgi wedge watcher)
   import_tasks: monitoring.yml
   tags: [monitoring, oom-hardening]
 

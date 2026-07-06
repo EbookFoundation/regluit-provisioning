@@ -13,11 +13,19 @@
 # Safety properties:
 # - Only pids that BOTH appear in a "Failed to exec Python script" log line
 #   AND are still running as a '(wsgi:regluit)' daemon are killed.
-# - Pid-reuse guard: a process is only killed if it was already running BEFORE
-#   its last logged failure. A wedged process necessarily predates its own
-#   failure lines; a fresh process that merely inherited a dead worker's pid
-#   started after them, and is skipped. Unrelated (non-wsgi) pid reuse is
-#   already excluded by the cmdline check.
+# - Pid-reuse guard: a process is only killed if it was already running
+#   STRICTLY BEFORE the second of its pid's last logged failure. A wedged
+#   process keeps producing fresh failure lines on every incoming request, so
+#   by the time cron checks it, its start time is well before its last failure;
+#   a fresh process that merely inherited a dead worker's pid postdates those
+#   lines and is skipped. Comparison is at whole-second resolution, so a
+#   same-second tie is treated as "possibly healthy" and skipped (fail-safe;
+#   the next cron run re-evaluates once new failure lines have accrued).
+#   Unrelated (non-wsgi) pid reuse is already excluded by the cmdline check.
+#   Residual false-kill risk requires pid wraparound onto a new wsgi daemon
+#   within ~1s of the old one's last failure — and even then the "damage" is
+#   one graceful respawn, the same event maximum-requests recycling performs
+#   routinely.
 # - A poisoned process can never recover (Django's app registry is permanently
 #   broken after a failed populate()), so killing it is always safe; mod_wsgi's
 #   daemon manager respawns it immediately while sibling workers keep serving.
@@ -25,16 +33,25 @@
 #   events, and each is worth knowing about).
 
 set -u
-ERRLOG="/var/log/apache2/$(date +%Y%m%d)_error.log"
+# Scan today's AND yesterday's error logs (chronological order matters for the
+# "last failure" lookup below): a worker wedged just before midnight would
+# otherwise be invisible until its next failed request lands in today's file.
+ERRLOGS=""
+for D in "$(date -d yesterday +%Y%m%d)" "$(date +%Y%m%d)"; do
+    F="/var/log/apache2/${D}_error.log"
+    [ -r "$F" ] && ERRLOGS="$ERRLOGS $F"
+done
+[ -n "$ERRLOGS" ] || exit 0
 TO="{{ mem_alert_email | default('notices@gluejar.com') }}"
 FROM="{{ default_from_email | default('notices@gluejar.com') }}"
 HOST=$(hostname)
+# NB: apache.conf.j2 currently hard-codes the 'regluit' daemon group; if that
+# is ever parameterized, use the same variable in both templates.
 WSGI_GROUP="{{ wsgi_process_group | default('regluit') }}"
 
-[ -r "$ERRLOG" ] || exit 0
-
-# Distinct pids with a failed WSGI script exec in today's error log.
-PIDS=$(grep -oE "mod_wsgi \(pid=[0-9]+\): Failed to exec Python script" "$ERRLOG" \
+# Distinct pids with a failed WSGI script exec in the scanned logs.
+# shellcheck disable=SC2086  # ERRLOGS is intentionally word-split
+PIDS=$(cat $ERRLOGS | grep -oE "mod_wsgi \(pid=[0-9]+\): Failed to exec Python script" \
         | grep -oE '[0-9]+' | sort -u)
 [ -n "$PIDS" ] || exit 0
 
@@ -48,9 +65,10 @@ for PID in $PIDS; do
 
     # Pid-reuse guard: parse the timestamp of the LAST failure line for this
     # pid ("[Mon Jul 06 08:15:08.208555 2026] ...", server-local time) and skip
-    # if the running process started after it — that's a new process that
-    # inherited the pid, not the wedged one.
-    LASTFAIL_TS=$(grep -E "mod_wsgi \(pid=${PID}\): Failed to exec" "$ERRLOG" | tail -1 \
+    # unless the running process started strictly before that second — a
+    # same-second tie could be a new process that inherited the pid, so it is
+    # skipped too (fail-safe; re-evaluated on the next run).
+    LASTFAIL_TS=$(cat $ERRLOGS | grep -E "mod_wsgi \(pid=${PID}\): Failed to exec" | tail -1 \
                    | sed -E 's/^\[([A-Za-z]+ [A-Za-z]+ [0-9]+ [0-9:]+)\.[0-9]+ ([0-9]{4})\].*/\1 \2/')
     LASTFAIL_EPOCH=$(date -d "$LASTFAIL_TS" +%s 2>/dev/null || echo 0)
     if [ "$LASTFAIL_EPOCH" -eq 0 ]; then
@@ -59,13 +77,13 @@ for PID in $PIDS; do
     fi
     ETIMES=$(ps -p "$PID" -o etimes= 2>/dev/null | tr -d ' ') || continue
     START_EPOCH=$(( $(date +%s) - ${ETIMES:-0} ))
-    if [ "$START_EPOCH" -gt "$LASTFAIL_EPOCH" ]; then
-        continue   # process is newer than its pid's last failure: pid reuse, healthy
+    if [ "$START_EPOCH" -ge "$LASTFAIL_EPOCH" ]; then
+        continue   # process not strictly older than its pid's last failure: possible pid reuse, skip
     fi
 
-    FAILCOUNT=$(grep -cE "mod_wsgi \(pid=${PID}\): Failed to exec Python script" "$ERRLOG")
-    FIRSTFAIL=$(grep -m1 -E "mod_wsgi \(pid=${PID}\): Failed to exec" "$ERRLOG" | cut -d']' -f1 | tr -d '[')
-    LASTTRACE=$(grep -A20 -m1 -E "mod_wsgi \(pid=${PID}\): Exception occurred" "$ERRLOG" | tail -20)
+    FAILCOUNT=$(cat $ERRLOGS | grep -cE "mod_wsgi \(pid=${PID}\): Failed to exec Python script")
+    FIRSTFAIL=$(cat $ERRLOGS | grep -m1 -E "mod_wsgi \(pid=${PID}\): Failed to exec" | cut -d']' -f1 | tr -d '[')
+    LASTTRACE=$(cat $ERRLOGS | grep -A20 -m1 -E "mod_wsgi \(pid=${PID}\): Exception occurred" | tail -20)
 
     logger -t wsgi_wedge_watch "killing wedged wsgi daemon pid=${PID} (${FAILCOUNT} failed execs since ${FIRSTFAIL})"
     kill "$PID" 2>/dev/null || continue
