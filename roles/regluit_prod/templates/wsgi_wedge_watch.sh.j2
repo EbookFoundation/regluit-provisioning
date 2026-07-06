@@ -1,0 +1,89 @@
+#!/bin/bash
+# Wedged-wsgi-worker watcher — detects a mod_wsgi daemon process whose WSGI
+# script failed to load (e.g. an import-time error during django.setup()) and
+# kills it so mod_wsgi respawns a fresh process. Managed by Ansible
+# (regluit_prod). See Gluejar/regluit#1204.
+#
+# Why: mod_wsgi does NOT restart a daemon process whose script failed to exec —
+# it keeps the process and answers every request with a 500 ("populate() isn't
+# reentrant") until something kills it. On 2026-07-06 one such worker 500ed
+# ~1 in 4 requests for 93 minutes. This failure mode emits NO Django error
+# emails (Django never finishes loading), so it is otherwise invisible.
+#
+# Safety properties:
+# - Only pids that BOTH appear in a "Failed to exec Python script" log line
+#   AND are still running as a '(wsgi:regluit)' daemon are killed.
+# - Pid-reuse guard: a process is only killed if it was already running BEFORE
+#   its last logged failure. A wedged process necessarily predates its own
+#   failure lines; a fresh process that merely inherited a dead worker's pid
+#   started after them, and is skipped. Unrelated (non-wsgi) pid reuse is
+#   already excluded by the cmdline check.
+# - A poisoned process can never recover (Django's app registry is permanently
+#   broken after a failed populate()), so killing it is always safe; mod_wsgi's
+#   daemon manager respawns it immediately while sibling workers keep serving.
+# - Alerts by email on every kill (no dedup needed: kills are rare one-shot
+#   events, and each is worth knowing about).
+
+set -u
+ERRLOG="/var/log/apache2/$(date +%Y%m%d)_error.log"
+TO="{{ mem_alert_email | default('notices@gluejar.com') }}"
+FROM="{{ default_from_email | default('notices@gluejar.com') }}"
+HOST=$(hostname)
+WSGI_GROUP="{{ wsgi_process_group | default('regluit') }}"
+
+[ -r "$ERRLOG" ] || exit 0
+
+# Distinct pids with a failed WSGI script exec in today's error log.
+PIDS=$(grep -oE "mod_wsgi \(pid=[0-9]+\): Failed to exec Python script" "$ERRLOG" \
+        | grep -oE '[0-9]+' | sort -u)
+[ -n "$PIDS" ] || exit 0
+
+for PID in $PIDS; do
+    # Still running AND still a wsgi daemon for our process group?
+    CMD=$(ps -p "$PID" -o cmd= 2>/dev/null) || continue
+    case "$CMD" in
+        *"(wsgi:${WSGI_GROUP})"*) ;;
+        *) continue ;;
+    esac
+
+    # Pid-reuse guard: parse the timestamp of the LAST failure line for this
+    # pid ("[Mon Jul 06 08:15:08.208555 2026] ...", server-local time) and skip
+    # if the running process started after it — that's a new process that
+    # inherited the pid, not the wedged one.
+    LASTFAIL_TS=$(grep -E "mod_wsgi \(pid=${PID}\): Failed to exec" "$ERRLOG" | tail -1 \
+                   | sed -E 's/^\[([A-Za-z]+ [A-Za-z]+ [0-9]+ [0-9:]+)\.[0-9]+ ([0-9]{4})\].*/\1 \2/')
+    LASTFAIL_EPOCH=$(date -d "$LASTFAIL_TS" +%s 2>/dev/null || echo 0)
+    if [ "$LASTFAIL_EPOCH" -eq 0 ]; then
+        logger -t wsgi_wedge_watch "could not parse failure timestamp for pid=${PID}; skipping (fail-safe)"
+        continue
+    fi
+    ETIMES=$(ps -p "$PID" -o etimes= 2>/dev/null | tr -d ' ') || continue
+    START_EPOCH=$(( $(date +%s) - ${ETIMES:-0} ))
+    if [ "$START_EPOCH" -gt "$LASTFAIL_EPOCH" ]; then
+        continue   # process is newer than its pid's last failure: pid reuse, healthy
+    fi
+
+    FAILCOUNT=$(grep -cE "mod_wsgi \(pid=${PID}\): Failed to exec Python script" "$ERRLOG")
+    FIRSTFAIL=$(grep -m1 -E "mod_wsgi \(pid=${PID}\): Failed to exec" "$ERRLOG" | cut -d']' -f1 | tr -d '[')
+    LASTTRACE=$(grep -A20 -m1 -E "mod_wsgi \(pid=${PID}\): Exception occurred" "$ERRLOG" | tail -20)
+
+    logger -t wsgi_wedge_watch "killing wedged wsgi daemon pid=${PID} (${FAILCOUNT} failed execs since ${FIRSTFAIL})"
+    kill "$PID" 2>/dev/null || continue
+
+    {
+        echo "From: $FROM"
+        echo "To: $TO"
+        echo "Subject: [unglue.it] wedged wsgi worker auto-healed on ${HOST} (pid ${PID})"
+        echo
+        echo "A mod_wsgi daemon process failed to load the WSGI script and was"
+        echo "serving 500s; wsgi_wedge_watch killed it at $(date -u) so mod_wsgi"
+        echo "respawns it. See Gluejar/regluit#1204 for the failure mode."
+        echo
+        echo "pid: ${PID}"
+        echo "failed exec attempts today: ${FAILCOUNT}"
+        echo "first failure: ${FIRSTFAIL}"
+        echo
+        echo "First logged traceback for this pid:"
+        echo "${LASTTRACE}"
+    } | /usr/sbin/sendmail -t || logger -t wsgi_wedge_watch "sendmail failed for pid=${PID} alert"
+done
