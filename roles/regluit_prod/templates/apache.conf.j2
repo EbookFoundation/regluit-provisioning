@@ -70,6 +70,27 @@ ErrorDocument 503 /maintenance.html
 Header always set Retry-After "600" "expr=%{REQUEST_STATUS} == 503"
 # ---------------------------------------------------------------------------
 
+# --- Crawler-trap guard (2026-07-10 incident) -------------------------------
+# Every page's footer links to /feedback/?page=<current-url> — including the
+# feedback page itself, so feedback pages link to feedback-pages-about-
+# feedback-pages: an infinite, self-multiplying URL space. Bot fleets
+# (~8k IPs, spoofed desktop-Chrome UAs, ignoring robots.txt) crawled it at
+# ~60k req/hr on 2026-07-10, pegging all wsgi daemons (load avg 13-16,
+# 17-31s TTFB sitewide). Serve a cheap static 403 before WSGI/Django sees it.
+#
+# Rule 1: /feedback/ request whose query string embeds an encoded /feedback
+#         URL (any encoding depth) = recursion. First-level
+#         /feedback/?page=<some-page> from a real user still works.
+RewriteCond %{REQUEST_URI} ^/feedback/ [NC]
+RewriteCond %{QUERY_STRING} (%2F|%252F)feedback [NC]
+RewriteRule ^ - [F]
+# Rule 2 (any path): a triple-encoded slash (%25252F) in a query string means
+#         a URL nested >= 3 levels deep via ?page=/?next= chains. No link the
+#         app emits for direct human use is ever triple-encoded.
+RewriteCond %{QUERY_STRING} %25252F [NC]
+RewriteRule ^ - [F]
+# ---------------------------------------------------------------------------
+
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
 # intermediate mode
 # 2015.03.04   (with Apache v 2.2.22 and OpenSSL 1.0.1 and HSTS enabled)
