@@ -99,6 +99,34 @@ RewriteRule ^ - [F]
 # layer. Revert = delete this stanza and rerun --tags apache-config.
 RewriteCond expr "-R '43.128.0.0/10'"
 RewriteRule ^ - [F]
+# Round 2 (same day, ~13:15 PDT): fleet shifted weight to sibling datacenter
+# ranges. All whois-verified TencentCloud/ACEVILLE or Alibaba Cloud:
+RewriteCond expr "-R '49.51.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '119.28.0.0/15'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '129.226.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '170.106.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '101.32.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '150.109.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '8.208.0.0/12'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '47.240.0.0/14'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '47.244.0.0/15'"
+RewriteRule ^ - [F]
+# Rogue scraper: "OAPEN-DOAB-TXT-Downloader/2.1 (personal research use)" —
+# single ISP IP, 23k req/day, wedged in the feedback trap via double-encoded
+# /password/reset/?next= chains that the recursion rules deliberately allow.
+RewriteCond %{HTTP_USER_AGENT} "OAPEN-DOAB-TXT-Downloader" [NC]
+RewriteRule ^ - [F]
+# NOT blocked (self-identified, robots.txt-honoring, modest rate — Eric's
+# call, since AI/SEO discoverability may serve the mission): GPTBot,
+# ClaudeBot, DotBot, meta-webindexer.
 # ---------------------------------------------------------------------------
 
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
