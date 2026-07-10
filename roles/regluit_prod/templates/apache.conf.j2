@@ -91,6 +91,16 @@ RewriteCond %{QUERY_STRING} %25252F [NC]
 RewriteRule ^ - [F]
 # ---------------------------------------------------------------------------
 
+# --- Datacenter crawler-fleet block (2026-07-10 incident) -------------------
+# ~59% of the 2026-07-10 flood came from Tencent Cloud international ranges
+# (ACEVILLE PTE.LTD = Tencent, 43.128.0.0/10): thousands of IPs, spoofed
+# desktop-Chrome User-Agents, ignoring robots.txt, carpet-crawling /work/
+# pages at ~600 req/min and pegging all 4 cores. Cheap 403 at the apache
+# layer. Revert = delete this stanza and rerun --tags apache-config.
+RewriteCond expr "-R '43.128.0.0/10'"
+RewriteRule ^ - [F]
+# ---------------------------------------------------------------------------
+
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
 # intermediate mode
 # 2015.03.04   (with Apache v 2.2.22 and OpenSSL 1.0.1 and HSTS enabled)
