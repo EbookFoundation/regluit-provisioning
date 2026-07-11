@@ -70,6 +70,65 @@ ErrorDocument 503 /maintenance.html
 Header always set Retry-After "600" "expr=%{REQUEST_STATUS} == 503"
 # ---------------------------------------------------------------------------
 
+# --- Crawler-trap guard (2026-07-10 incident) -------------------------------
+# Every page's footer links to /feedback/?page=<current-url> — including the
+# feedback page itself, so feedback pages link to feedback-pages-about-
+# feedback-pages: an infinite, self-multiplying URL space. Bot fleets
+# (~8k IPs, spoofed desktop-Chrome UAs, ignoring robots.txt) crawled it at
+# ~60k req/hr on 2026-07-10, pegging all wsgi daemons (load avg 13-16,
+# 17-31s TTFB sitewide). Serve a cheap static 403 before WSGI/Django sees it.
+#
+# Rule 1: /feedback/ request whose query string embeds an encoded /feedback
+#         URL (any encoding depth) = recursion. First-level
+#         /feedback/?page=<some-page> from a real user still works.
+RewriteCond %{REQUEST_URI} ^/feedback/ [NC]
+RewriteCond %{QUERY_STRING} (%2F|%252F)feedback [NC]
+RewriteRule ^ - [F]
+# Rule 2 (any path): a triple-encoded slash (%25252F) in a query string means
+#         a URL nested >= 3 levels deep via ?page=/?next= chains. No link the
+#         app emits for direct human use is ever triple-encoded.
+RewriteCond %{QUERY_STRING} %25252F [NC]
+RewriteRule ^ - [F]
+# ---------------------------------------------------------------------------
+
+# --- Datacenter crawler-fleet block (2026-07-10 incident) -------------------
+# ~59% of the 2026-07-10 flood came from Tencent Cloud international ranges
+# (ACEVILLE PTE.LTD = Tencent, 43.128.0.0/10): thousands of IPs, spoofed
+# desktop-Chrome User-Agents, ignoring robots.txt, carpet-crawling /work/
+# pages at ~600 req/min and pegging all 4 cores. Cheap 403 at the apache
+# layer. Revert = delete this stanza and rerun --tags apache-config.
+RewriteCond expr "-R '43.128.0.0/10'"
+RewriteRule ^ - [F]
+# Round 2 (same day, ~13:15 PDT): fleet shifted weight to sibling datacenter
+# ranges. All whois-verified TencentCloud/ACEVILLE or Alibaba Cloud:
+RewriteCond expr "-R '49.51.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '119.28.0.0/15'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '129.226.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '170.106.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '101.32.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '150.109.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '8.208.0.0/12'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '47.240.0.0/14'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '47.244.0.0/15'"
+RewriteRule ^ - [F]
+# Rogue scraper: "OAPEN-DOAB-TXT-Downloader/2.1 (personal research use)" —
+# single ISP IP, 23k req/day, wedged in the feedback trap via double-encoded
+# /password/reset/?next= chains that the recursion rules deliberately allow.
+RewriteCond %{HTTP_USER_AGENT} "OAPEN-DOAB-TXT-Downloader" [NC]
+RewriteRule ^ - [F]
+# NOT blocked (self-identified, robots.txt-honoring, modest rate — Eric's
+# call, since AI/SEO discoverability may serve the mission): GPTBot,
+# ClaudeBot, DotBot, meta-webindexer.
+# ---------------------------------------------------------------------------
+
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
 # intermediate mode
 # 2015.03.04   (with Apache v 2.2.22 and OpenSSL 1.0.1 and HSTS enabled)
