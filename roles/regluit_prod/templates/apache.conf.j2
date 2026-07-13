@@ -127,6 +127,16 @@ RewriteRule ^ - [F]
 # NOT blocked (self-identified, robots.txt-honoring, modest rate — Eric's
 # call, since AI/SEO discoverability may serve the mission): GPTBot,
 # ClaudeBot, DotBot, meta-webindexer.
+#
+# Round 3 (2026-07-12 ~23:15 PDT surge): the distributed long-tail botnet
+# (2,200+ IPs in one 8k-line log window, unblockable by CIDR) resurged and
+# pegged all 4 cores (load 17, TTFB 21-24s). Its fingerprint: spoofed
+# desktop-Chrome UAs claiming versions 103-133 — real Chrome auto-updates,
+# so a July-2026 UA claiming Chrome <134 is years stale. Genuine users in
+# the same window: Chrome 142-146 (~1% of hits). Blocks 100-133; the spared
+# bots (GPTBot/ClaudeBot/Meta/Googlebot/DotBot) do not use these UA strings.
+RewriteCond %{HTTP_USER_AGENT} "Chrome/1([0-2][0-9]|3[0-3])\." [NC]
+RewriteRule ^ - [F]
 # ---------------------------------------------------------------------------
 
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
