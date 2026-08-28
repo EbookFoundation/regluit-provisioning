@@ -13,5 +13,88 @@
 
   - import_role:
       name: regluit_prod
-  
-  
+
+  # Scoped Stripe-key rotation for staging only (2026-08-28). ONLY true when
+  # invoked as `--tags stripe`: the tasks below surgically rewrite just these
+  # two lines in the already-deployed keys/common.py, leaving everything
+  # else in that file (and in keys/host.py / settings/prod.py) untouched by
+  # THESE TASKS. It is not a structural guarantee — an untagged run of this
+  # playbook still executes the full `import_role: regluit_prod` above,
+  # which re-renders prod.py/common.py/host.py from group_vars/test's
+  # common_keys/host_keys (which test doesn't define, so that render would
+  # fail loudly rather than silently overwrite — but don't run this
+  # untagged expecting only the Stripe edit). `--tags config` also still
+  # selects the role's full render tasks, not just these two.
+  #
+  # Codex review (2026-08-28) flagged that a plain `lineinfile` fails open
+  # if the file's exact quote/spacing format ever drifts (regexp misses ->
+  # appends a duplicate at EOF instead of erroring). The preflight assert
+  # below turns that into a loud failure: it requires exactly one existing
+  # `STRIPE_PK =` / `STRIPE_SK =` line before either edit runs.
+  - name: Preflight — exactly one STRIPE_PK/STRIPE_SK line exists today
+    command: grep -c -E "^{{ item }}\\s*=" "{{ project_path }}/settings/keys/common.py"
+    register: _stripe_line_count
+    changed_when: false
+    check_mode: false     # pure read; run for real even under --check so the
+                           # assert below is meaningful in a dry run too
+    loop: [STRIPE_PK, STRIPE_SK]
+    tags: [config, stripe]
+
+  - name: Preflight — fail loudly if that count isn't exactly 1
+    assert:
+      that: item.stdout | int == 1
+      fail_msg: >-
+        Expected exactly one {{ item.item }} assignment in keys/common.py,
+        found {{ item.stdout }}. Refusing to edit — the file's shape has
+        drifted from what these tasks assume; fix by hand or update the
+        regexp below.
+    loop: "{{ _stripe_line_count.results }}"
+    tags: [config, stripe]
+
+  - name: Preflight — new vault values are non-empty and test-mode-shaped
+    assert:
+      that:
+        - stripe_pk is defined and stripe_pk | length > 0
+        - stripe_sk is defined and stripe_sk | length > 0
+        - stripe_pk.startswith('pk_test_')
+        - stripe_sk.startswith('sk_test_')
+      fail_msg: >-
+        stripe_pk/stripe_sk must be non-empty TEST-mode keys (pk_test_/
+        sk_test_ prefix) — refusing to write a live key or an empty value
+        onto staging.
+    no_log: true          # values live in vault_stripe_pk/vault_stripe_sk
+    tags: [config, stripe]
+
+  - name: Rotate STRIPE_PK in keys/common.py (staging only, surgical)
+    lineinfile:
+      path: "{{ project_path }}/settings/keys/common.py"
+      regexp: "^STRIPE_PK\\s*=.*$"
+      line: "STRIPE_PK = os.environ.get('STRIPE_PK', '{{ stripe_pk }}')"
+      validate: "/usr/bin/python3 -m py_compile %s"
+    tags: [config, stripe]
+    no_log: true          # renders vault secrets — never log / never --diff
+    notify:
+      - restart apache
+      - restart celeryd
+      - restart celerybeat
+
+  - name: Rotate STRIPE_SK in keys/common.py (staging only, surgical)
+    lineinfile:
+      path: "{{ project_path }}/settings/keys/common.py"
+      regexp: "^STRIPE_SK\\s*=.*$"
+      line: "STRIPE_SK = os.environ.get('STRIPE_SK', '{{ stripe_sk }}')"
+      validate: "/usr/bin/python3 -m py_compile %s"
+    tags: [config, stripe]
+    no_log: true          # renders vault secrets — never log / never --diff
+    notify:
+      - restart apache
+      - restart celeryd
+      - restart celerybeat
+
+  # Note: these are FILE fallback values (`os.environ.get(NAME, <this>)`).
+  # If STRIPE_PK/STRIPE_SK were ever set as real OS environment variables
+  # for Apache/Celery on this box, that would win over this file and vault
+  # rotation here would silently not change the effective runtime key. Not
+  # the case as of 2026-08-28 (confirmed live: rotating the file value
+  # changed the key Stripe's API actually saw), but worth checking first if
+  # a future rotation doesn't seem to take effect.
