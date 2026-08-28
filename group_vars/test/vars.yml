@@ -7,12 +7,21 @@
 ### secret key went stale (rolled in the Stripe dashboard, old key started
 ### failing "Expired API Key provided") because it was a static hand-set
 ### value with nothing managing it. Scoped fix, not a full parity migration:
-### only these two vars are vault-backed for test; everything else on the
-### box (AWS keys, SECRET_KEY, email password, etc.) is untouched and stays
+### only these two vars are vault-backed for test; everything else in
+### settings/keys/common.py and keys/host.py (AWS keys, SECRET_KEY, email
+### password, OAuth, Turnstile, ...) is untouched by these tasks and stays
 ### exactly as it is today. See setup-test.yml's `stripe`-tagged tasks,
-### which surgically rewrite just the STRIPE_PK/STRIPE_SK lines in the
-### already-deployed settings/keys/common.py rather than re-rendering the
-### whole file (which would need every other secret vaulted too).
+### which surgically rewrite just the STRIPE_PK/STRIPE_SK lines rather than
+### re-rendering the whole file (which would need every other secret
+### vaulted too) — and ONLY when run as `--tags stripe`; an untagged run
+### still hits the full role render above, which test isn't configured for.
+###
+### The values in group_vars/test/vault.yml are a manual copy from the
+### "unglue.it staging Stripe" item (EbookFoundation 1Password vault), not
+### a live sync — to rotate, update 1Password, then re-run:
+###   op read "op://EbookFoundation/unglue.it staging Stripe/Secret key"
+###   ansible-vault edit --encrypt-vault-id fef group_vars/test/vault.yml
+###   ansible-playbook -i hosts setup-test.yml --tags stripe
 
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
