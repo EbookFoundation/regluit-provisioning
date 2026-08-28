@@ -2,6 +2,17 @@
 ### Variables for the test.unglue.it staging server (deploy.yml / code-only) ###
 ### Intentionally minimal & vault-free: deploy.yml does git checkout + restart   ###
 ### only (no settings render / DB / certs), so no secret vars are needed here.    ###
+###
+### EXCEPTION (2026-08-28): stripe_pk/stripe_sk below. Staging's Stripe test
+### secret key went stale (rolled in the Stripe dashboard, old key started
+### failing "Expired API Key provided") because it was a static hand-set
+### value with nothing managing it. Scoped fix, not a full parity migration:
+### only these two vars are vault-backed for test; everything else on the
+### box (AWS keys, SECRET_KEY, email password, etc.) is untouched and stays
+### exactly as it is today. See setup-test.yml's `stripe`-tagged tasks,
+### which surgically rewrite just the STRIPE_PK/STRIPE_SK lines in the
+### already-deployed settings/keys/common.py rather than re-rendering the
+### whole file (which would need every other secret vaulted too).
 
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
@@ -12,3 +23,6 @@ git_branch: "master"
 # Non-production environment: suppress error emails to prod admins.
 # See EbookFoundation/security-private#11.
 disable_admin_emails: true
+
+stripe_pk: "{{ vault_stripe_pk }}"
+stripe_sk: "{{ vault_stripe_sk }}"
