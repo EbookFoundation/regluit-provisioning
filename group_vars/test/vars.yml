@@ -2,6 +2,35 @@
 ### Variables for the test.unglue.it staging server (deploy.yml / code-only) ###
 ### Intentionally minimal & vault-free: deploy.yml does git checkout + restart   ###
 ### only (no settings render / DB / certs), so no secret vars are needed here.    ###
+###
+### EXCEPTION (2026-09-02): social_auth_google_oauth2_key/_secret below, same
+### scoped pattern as stripe_pk/stripe_sk (see fix/staging-stripe-key-rotation,
+### provisioning#68) -- only these vars (and Stripe's) are vault-backed for
+### test; everything else in the settings/keys files (and deploy/prod.wsgi,
+### if present) is untouched by these tasks and stays exactly as it is today.
+###
+### Re-homing the Google OAuth client (Gluejar/regluit#1246): a new client was
+### created in RY's own Cloud project ("unglueit-auth") to replace the flagged
+### shared one. See setup-test.yml's google-oauth-tagged tasks, which
+### surgically rewrite the SOCIAL_AUTH_GOOGLE_OAUTH2 lines in keys/host.py
+### (not keys/common.py -- that's where Stripe's keys live; these two are in
+### host_keys on prod, hence host.py) and, if present, deploy/prod.wsgi --
+### and ONLY when run as --tags google-oauth. An untagged run still hits the
+### full role render above, which test isn't configured for.
+###
+### TODO (RY): the two vault vars below do not exist yet in this group's
+### vault file -- this PR intentionally does NOT create or commit one with
+### values. Before running with --tags google-oauth:
+###   If group_vars/test/vault.yml does not exist yet (PR #68 unmerged):
+###     ansible-vault create --encrypt-vault-id fef group_vars/test/vault.yml
+###   If it already exists (PR #68 landed):
+###     ansible-vault edit --encrypt-vault-id fef group_vars/test/vault.yml
+###   (ansible-vault edit does NOT create a new file -- verified empirically,
+###   Codex round-1 review of this PR -- use create for a first-time file.)
+### Add both vault_social_auth_google_oauth2_key /
+### vault_social_auth_google_oauth2_secret, pasted from wherever you're
+### holding the new client's id/secret (1Password, etc.) -- never typed
+### into a terminal.
 
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
@@ -12,3 +41,6 @@ git_branch: "master"
 # Non-production environment: suppress error emails to prod admins.
 # See EbookFoundation/security-private#11.
 disable_admin_emails: true
+
+social_auth_google_oauth2_key: "{{ vault_social_auth_google_oauth2_key }}"
+social_auth_google_oauth2_secret: "{{ vault_social_auth_google_oauth2_secret }}"
