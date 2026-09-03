@@ -11,61 +11,66 @@
   - name: Gathering Facts
     setup:
 
-  - import_role:
-      name: regluit_prod
-
   # Scoped Google-OAuth-client re-home for staging only (Gluejar/regluit#1246,
   # 2026-09-02). Same pattern as the Stripe rotation tasks (see
   # fix/staging-stripe-key-rotation, provisioning#68): ONLY true when invoked
   # as `--tags google-oauth` -- the tasks below surgically rewrite just these
-  # two lines in the already-deployed keys/host.py, leaving everything else in
-  # that file (and in keys/common.py / settings/prod.py) untouched by THESE
-  # TASKS. Not a structural guarantee -- an untagged run of this playbook
-  # still executes the full `import_role: regluit_prod` above, which
-  # re-renders prod.py/common.py/host.py from group_vars/test's
-  # common_keys/host_keys (which test does not define, so that render would
-  # fail loudly rather than silently overwrite -- but do not run this
-  # untagged expecting only this edit).
+  # lines in the already-deployed settings files, leaving everything else
+  # (and settings/prod.py) untouched by THESE TASKS. Not a structural
+  # guarantee -- an untagged run of this playbook still executes the full
+  # `import_role: regluit_prod` below, which re-renders prod.py/common.py/
+  # host.py/prod.wsgi from group_vars/test's common_keys/host_keys (which
+  # test does not define -- that render already fails today, before this PR;
+  # see provisioning#45/#56 and Codex round-1 review of this PR, which
+  # confirmed this is pre-existing, not introduced here).
   #
-  # RY: these vars come from group_vars/test/vault.yml, which this PR does
-  # NOT create or populate with values. Before running with --tags
-  # google-oauth, run: ansible-vault edit --encrypt-vault-id fef
-  # group_vars/test/vault.yml and add vault_social_auth_google_oauth2_key /
-  # vault_social_auth_google_oauth2_secret yourself.
-  - name: "Preflight: exactly one SOCIAL_AUTH_GOOGLE_OAUTH2_KEY/_SECRET line exists today"
+  # RY: these vars come from group_vars/test/vault.yml. If that file does
+  # not exist yet (PR #68 unmerged), CREATE it -- ansible-vault edit does
+  # NOT create a new file, only ansible-vault create does (verified
+  # empirically, Codex round-1 review of this PR):
+  #   ansible-vault create --encrypt-vault-id fef group_vars/test/vault.yml
+  # If it already exists (PR #68 landed, or a prior run of this PR's
+  # instructions already created it), use edit instead:
+  #   ansible-vault edit --encrypt-vault-id fef group_vars/test/vault.yml
+  # Either way, add vault_social_auth_google_oauth2_key /
+  # vault_social_auth_google_oauth2_secret yourself -- this PR does not.
+  - name: "Preflight: if a Google-OAuth vault value is set, it must not be empty/whitespace"
+    assert:
+      that:
+        - (social_auth_google_oauth2_key | default('', true)) | trim | length > 0
+        - (social_auth_google_oauth2_secret | default('', true)) | trim | length > 0
+      fail_msg: >-
+        social_auth_google_oauth2_key/secret are empty or whitespace-only --
+        refusing to write an empty value onto staging. (If this fails
+        immediately, the vault vars likely have not been added yet -- see
+        the note above.)
+    no_log: true
+    when: (social_auth_google_oauth2_key is defined) or (social_auth_google_oauth2_secret is defined)
+    tags: [config, google-oauth]
+
+  - import_role:
+      name: regluit_prod
+
+  - name: "Preflight: exactly one SOCIAL_AUTH_GOOGLE_OAUTH2_KEY/_SECRET line exists today (keys/host.py)"
     command: >-
       python3 -c "import re,sys; p='{{ project_path }}/settings/keys/host.py';
       pat=re.compile(r'^{{ item }}\s*='); print(sum(1 for l in open(p) if pat.match(l)))"
-    register: _google_oauth_line_count
+    register: _google_oauth_hostpy_count
     changed_when: false
     check_mode: false     # pure read; run for real even under --check so the
                            # assert below is meaningful in a dry run too
     loop: [SOCIAL_AUTH_GOOGLE_OAUTH2_KEY, SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET]
     tags: [config, google-oauth]
 
-  - name: "Preflight: fail loudly if that count is not exactly 1"
+  - name: "Preflight: fail loudly if that count is not exactly 1 (keys/host.py)"
     assert:
       that: item.stdout | int == 1
       fail_msg: >-
-        Expected exactly one {{ item.item }} assignment in keys/host.py,
-        found {{ item.stdout }}. Refusing to edit -- the file's shape has
-        drifted from what these tasks assume; fix by hand or update the
-        pattern above.
-    loop: "{{ _google_oauth_line_count.results }}"
-    tags: [config, google-oauth]
-
-  - name: "Preflight: new vault-sourced values are non-empty"
-    assert:
-      that:
-        - social_auth_google_oauth2_key is defined
-        - social_auth_google_oauth2_key | length > 0
-        - social_auth_google_oauth2_secret is defined
-        - social_auth_google_oauth2_secret | length > 0
-      fail_msg: >-
-        social_auth_google_oauth2_key/secret must be defined and non-empty --
-        refusing to write an empty value onto staging. (If this fails, the
-        vault vars likely have not been added yet -- see the note above.)
-    no_log: true          # values live in the vault_ vars -- never log
+        Expected exactly one {{ item.item }} assignment in
+        settings/keys/host.py, found {{ item.stdout }}. Refusing to edit --
+        the file's shape has drifted from what these tasks assume; fix by
+        hand or update the pattern above.
+    loop: "{{ _google_oauth_hostpy_count.results }}"
     tags: [config, google-oauth]
 
   - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_KEY in keys/host.py (staging only, surgical)
@@ -94,9 +99,86 @@
       - restart celeryd
       - restart celerybeat
 
-  # Note: these are FILE fallback values (`os.environ.get(NAME, <this>)`).
-  # If SOCIAL_AUTH_GOOGLE_OAUTH2_KEY/_SECRET were ever set as real OS
-  # environment variables for Apache/Celery on this box, that would win over
-  # this file and a vault rotation here would silently not change the
-  # effective runtime key -- worth checking first if a rotation does not
-  # seem to take effect (same caveat PR #68 documented for Stripe).
+  # deploy/prod.wsgi ALSO sets os.environ[NAME] directly (see prod.wsgi.j2)
+  # and, if present, would win over keys/host.py's fallback the same way it
+  # does on prod (Codex round-1 review of this PR -- the finding that
+  # motivated all of this file's WSGI-related tasks was specific to prod,
+  # where deploy/prod.wsgi is confirmed live via apache.conf.j2's
+  # WSGIScriptAlias; whether test's box has ever had this file rendered is
+  # NOT independently confirmed here -- deploy.yml's normal code-only path
+  # never touches it, but test may have gotten one at initial standup via a
+  # full role run, the same way its keys/host.py already holds a full
+  # untracked secret schema per an earlier session's forensics). So: check
+  # first, only touch it if it is actually there.
+  - name: "Check whether deploy/prod.wsgi exists on this box"
+    stat:
+      path: "{{ project_path }}/deploy/prod.wsgi"
+    register: _prod_wsgi_stat
+    tags: [config, google-oauth]
+
+  - name: "Preflight: exactly one os.environ assignment line exists today (deploy/prod.wsgi)"
+    command: >-
+      python3 -c "p='{{ project_path }}/deploy/prod.wsgi'; q=chr(39);
+      needle='os.environ['+q+'{{ item }}'+q+'] = ';
+      print(sum(1 for l in open(p) if l.startswith(needle)))"
+    register: _google_oauth_wsgi_count
+    changed_when: false
+    check_mode: false
+    when: _prod_wsgi_stat.stat.exists
+    loop: [SOCIAL_AUTH_GOOGLE_OAUTH2_KEY, SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET]
+    tags: [config, google-oauth]
+
+  - name: "Preflight: fail loudly if that count is not exactly 1 (deploy/prod.wsgi, when present)"
+    assert:
+      that: item.stdout | int == 1
+      fail_msg: >-
+        Expected exactly one os.environ['{{ item.item }}'] assignment in
+        deploy/prod.wsgi, found {{ item.stdout }}. Refusing to edit -- the
+        file's shape has drifted from what these tasks assume; fix by hand
+        or update the pattern above.
+    when: _prod_wsgi_stat.stat.exists
+    loop: "{{ _google_oauth_wsgi_count.results }}"
+    tags: [config, google-oauth]
+
+  - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_KEY in deploy/prod.wsgi (staging only, surgical, when present)
+    lineinfile:
+      path: "{{ project_path }}/deploy/prod.wsgi"
+      regexp: "^os\\.environ\\['SOCIAL_AUTH_GOOGLE_OAUTH2_KEY'\\] = .*$"
+      line: "os.environ['SOCIAL_AUTH_GOOGLE_OAUTH2_KEY'] = '{{ social_auth_google_oauth2_key }}'"
+      validate: "/usr/bin/python3 -m py_compile %s"
+    when: _prod_wsgi_stat.stat.exists
+    tags: [config, google-oauth]
+    no_log: true          # renders vault secrets -- never log / never --diff
+    notify:
+      - restart apache
+      - restart celeryd
+      - restart celerybeat
+
+  - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET in deploy/prod.wsgi (staging only, surgical, when present)
+    lineinfile:
+      path: "{{ project_path }}/deploy/prod.wsgi"
+      regexp: "^os\\.environ\\['SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET'\\] = .*$"
+      line: "os.environ['SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET'] = '{{ social_auth_google_oauth2_secret }}'"
+      validate: "/usr/bin/python3 -m py_compile %s"
+    when: _prod_wsgi_stat.stat.exists
+    tags: [config, google-oauth]
+    no_log: true          # renders vault secrets -- never log / never --diff
+    notify:
+      - restart apache
+      - restart celeryd
+      - restart celerybeat
+
+  # Note: these are FILE fallback values (`os.environ.get(NAME, <this>)` in
+  # keys/host.py; a direct os.environ assignment in deploy/prod.wsgi, when
+  # present). If SOCIAL_AUTH_GOOGLE_OAUTH2_KEY/_SECRET were ever ALSO set as
+  # real OS environment variables for Apache/Celery some other way (systemd
+  # unit, /etc/environment, etc.), that would win over both files here and a
+  # vault rotation would silently not change the effective runtime key --
+  # worth checking first if a rotation does not seem to take effect (same
+  # caveat PR #68 documented for Stripe).
+  #
+  # --check --diff safety note: same as setup-prod.yml -- the role's own
+  # "Create WSGI Script" task has no no_log, so a FULL, UNTAGGED
+  # --check --diff (if it even completes -- see the pre-existing test-render
+  # failure noted above) could print secrets. The lineinfile tasks in this
+  # file are no_log: true and safe to --diff via --tags google-oauth alone.
