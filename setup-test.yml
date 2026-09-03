@@ -13,5 +13,90 @@
 
   - import_role:
       name: regluit_prod
-  
-  
+
+  # Scoped Google-OAuth-client re-home for staging only (Gluejar/regluit#1246,
+  # 2026-09-02). Same pattern as the Stripe rotation tasks (see
+  # fix/staging-stripe-key-rotation, provisioning#68): ONLY true when invoked
+  # as `--tags google-oauth` -- the tasks below surgically rewrite just these
+  # two lines in the already-deployed keys/host.py, leaving everything else in
+  # that file (and in keys/common.py / settings/prod.py) untouched by THESE
+  # TASKS. Not a structural guarantee -- an untagged run of this playbook
+  # still executes the full `import_role: regluit_prod` above, which
+  # re-renders prod.py/common.py/host.py from group_vars/test's
+  # common_keys/host_keys (which test does not define, so that render would
+  # fail loudly rather than silently overwrite -- but do not run this
+  # untagged expecting only this edit).
+  #
+  # RY: these vars come from group_vars/test/vault.yml, which this PR does
+  # NOT create or populate with values. Before running with --tags
+  # google-oauth, run: ansible-vault edit --encrypt-vault-id fef
+  # group_vars/test/vault.yml and add vault_social_auth_google_oauth2_key /
+  # vault_social_auth_google_oauth2_secret yourself.
+  - name: "Preflight: exactly one SOCIAL_AUTH_GOOGLE_OAUTH2_KEY/_SECRET line exists today"
+    command: >-
+      python3 -c "import re,sys; p='{{ project_path }}/settings/keys/host.py';
+      pat=re.compile(r'^{{ item }}\s*='); print(sum(1 for l in open(p) if pat.match(l)))"
+    register: _google_oauth_line_count
+    changed_when: false
+    check_mode: false     # pure read; run for real even under --check so the
+                           # assert below is meaningful in a dry run too
+    loop: [SOCIAL_AUTH_GOOGLE_OAUTH2_KEY, SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET]
+    tags: [config, google-oauth]
+
+  - name: "Preflight: fail loudly if that count is not exactly 1"
+    assert:
+      that: item.stdout | int == 1
+      fail_msg: >-
+        Expected exactly one {{ item.item }} assignment in keys/host.py,
+        found {{ item.stdout }}. Refusing to edit -- the file's shape has
+        drifted from what these tasks assume; fix by hand or update the
+        pattern above.
+    loop: "{{ _google_oauth_line_count.results }}"
+    tags: [config, google-oauth]
+
+  - name: "Preflight: new vault-sourced values are non-empty"
+    assert:
+      that:
+        - social_auth_google_oauth2_key is defined
+        - social_auth_google_oauth2_key | length > 0
+        - social_auth_google_oauth2_secret is defined
+        - social_auth_google_oauth2_secret | length > 0
+      fail_msg: >-
+        social_auth_google_oauth2_key/secret must be defined and non-empty --
+        refusing to write an empty value onto staging. (If this fails, the
+        vault vars likely have not been added yet -- see the note above.)
+    no_log: true          # values live in the vault_ vars -- never log
+    tags: [config, google-oauth]
+
+  - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_KEY in keys/host.py (staging only, surgical)
+    lineinfile:
+      path: "{{ project_path }}/settings/keys/host.py"
+      regexp: "^SOCIAL_AUTH_GOOGLE_OAUTH2_KEY\\s*=.*$"
+      line: "SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.environ.get('SOCIAL_AUTH_GOOGLE_OAUTH2_KEY', '{{ social_auth_google_oauth2_key }}')"
+      validate: "/usr/bin/python3 -m py_compile %s"
+    tags: [config, google-oauth]
+    no_log: true          # renders vault secrets -- never log / never --diff
+    notify:
+      - restart apache
+      - restart celeryd
+      - restart celerybeat
+
+  - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET in keys/host.py (staging only, surgical)
+    lineinfile:
+      path: "{{ project_path }}/settings/keys/host.py"
+      regexp: "^SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET\\s*=.*$"
+      line: "SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ.get('SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET', '{{ social_auth_google_oauth2_secret }}')"
+      validate: "/usr/bin/python3 -m py_compile %s"
+    tags: [config, google-oauth]
+    no_log: true          # renders vault secrets -- never log / never --diff
+    notify:
+      - restart apache
+      - restart celeryd
+      - restart celerybeat
+
+  # Note: these are FILE fallback values (`os.environ.get(NAME, <this>)`).
+  # If SOCIAL_AUTH_GOOGLE_OAUTH2_KEY/_SECRET were ever set as real OS
+  # environment variables for Apache/Celery on this box, that would win over
+  # this file and a vault rotation here would silently not change the
+  # effective runtime key -- worth checking first if a rotation does not
+  # seem to take effect (same caveat PR #68 documented for Stripe).

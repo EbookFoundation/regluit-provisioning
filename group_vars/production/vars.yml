@@ -78,3 +78,16 @@ host_keys:
   aws_storage_bucket_name:  '{{ vault_aws_storage_bucket_name }}'
   cf_turnstile_site_key:  '{{ vault_cf_turnstile_site_key }}'
   cf_turnstile_secret_key:  '{{ vault_cf_turnstile_secret_key }}'
+### Re-homing the Google OAuth client (Gluejar/regluit#1246), 2026-09-02: a
+### new client was created in RY's own Cloud project ("unglueit-auth") to
+### replace the flagged shared one. The two plain vars below are a deliberate
+### duplicate of host_keys.social_auth_google_oauth2_key/_secret above -- same
+### underlying vault variables, just also exposed as bare names so
+### setup-prod.yml's new google-oauth-tagged tasks (a surgical, narrower
+### alternative to the full role re-render this file's host_keys already
+### drives) can reference them the same simple way setup-test.yml's
+### equivalent tasks do. No new vault variable names -- rotate the two
+### existing vault_social_auth_google_oauth2_key/_secret entries and both
+### paths pick up the new value.
+social_auth_google_oauth2_key: "{{ vault_social_auth_google_oauth2_key }}"
+social_auth_google_oauth2_secret: "{{ vault_social_auth_google_oauth2_secret }}"
