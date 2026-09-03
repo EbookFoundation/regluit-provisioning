@@ -51,6 +51,13 @@
   - import_role:
       name: regluit_prod
 
+  # All preflight checks for BOTH files run before EITHER file is written
+  # (Codex round-2 review of this PR: an earlier draft wrote keys/host.py
+  # first, then checked deploy/prod.wsgi -- if the WSGI file existed but had
+  # drifted from the expected shape, that order left host.py already
+  # rewritten with the new credential while prod.wsgi's assertion failed
+  # and aborted, a split on-disk state. Every check below now runs first;
+  # the two "Rotate" blocks that actually write come last.)
   - name: "Preflight: exactly one SOCIAL_AUTH_GOOGLE_OAUTH2_KEY/_SECRET line exists today (keys/host.py)"
     command: >-
       python3 -c "import re,sys; p='{{ project_path }}/settings/keys/host.py';
@@ -72,32 +79,6 @@
         hand or update the pattern above.
     loop: "{{ _google_oauth_hostpy_count.results }}"
     tags: [config, google-oauth]
-
-  - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_KEY in keys/host.py (staging only, surgical)
-    lineinfile:
-      path: "{{ project_path }}/settings/keys/host.py"
-      regexp: "^SOCIAL_AUTH_GOOGLE_OAUTH2_KEY\\s*=.*$"
-      line: "SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.environ.get('SOCIAL_AUTH_GOOGLE_OAUTH2_KEY', '{{ social_auth_google_oauth2_key }}')"
-      validate: "/usr/bin/python3 -m py_compile %s"
-    tags: [config, google-oauth]
-    no_log: true          # renders vault secrets -- never log / never --diff
-    notify:
-      - restart apache
-      - restart celeryd
-      - restart celerybeat
-
-  - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET in keys/host.py (staging only, surgical)
-    lineinfile:
-      path: "{{ project_path }}/settings/keys/host.py"
-      regexp: "^SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET\\s*=.*$"
-      line: "SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ.get('SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET', '{{ social_auth_google_oauth2_secret }}')"
-      validate: "/usr/bin/python3 -m py_compile %s"
-    tags: [config, google-oauth]
-    no_log: true          # renders vault secrets -- never log / never --diff
-    notify:
-      - restart apache
-      - restart celeryd
-      - restart celerybeat
 
   # deploy/prod.wsgi ALSO sets os.environ[NAME] directly (see prod.wsgi.j2)
   # and, if present, would win over keys/host.py's fallback the same way it
@@ -139,6 +120,32 @@
     when: _prod_wsgi_stat.stat.exists
     loop: "{{ _google_oauth_wsgi_count.results }}"
     tags: [config, google-oauth]
+
+  - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_KEY in keys/host.py (staging only, surgical)
+    lineinfile:
+      path: "{{ project_path }}/settings/keys/host.py"
+      regexp: "^SOCIAL_AUTH_GOOGLE_OAUTH2_KEY\\s*=.*$"
+      line: "SOCIAL_AUTH_GOOGLE_OAUTH2_KEY = os.environ.get('SOCIAL_AUTH_GOOGLE_OAUTH2_KEY', '{{ social_auth_google_oauth2_key }}')"
+      validate: "/usr/bin/python3 -m py_compile %s"
+    tags: [config, google-oauth]
+    no_log: true          # renders vault secrets -- never log / never --diff
+    notify:
+      - restart apache
+      - restart celeryd
+      - restart celerybeat
+
+  - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET in keys/host.py (staging only, surgical)
+    lineinfile:
+      path: "{{ project_path }}/settings/keys/host.py"
+      regexp: "^SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET\\s*=.*$"
+      line: "SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.environ.get('SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET', '{{ social_auth_google_oauth2_secret }}')"
+      validate: "/usr/bin/python3 -m py_compile %s"
+    tags: [config, google-oauth]
+    no_log: true          # renders vault secrets -- never log / never --diff
+    notify:
+      - restart apache
+      - restart celeryd
+      - restart celerybeat
 
   - name: Rotate SOCIAL_AUTH_GOOGLE_OAUTH2_KEY in deploy/prod.wsgi (staging only, surgical, when present)
     lineinfile:

@@ -13,14 +13,19 @@
 
   # Google-OAuth-client re-home, prod (Gluejar/regluit#1246, 2026-09-02).
   # This preflight runs BEFORE import_role on purpose (Codex round-1 review
-  # of this PR): the role below unconditionally re-renders BOTH
-  # settings/keys/host.py AND deploy/prod.wsgi from host_keys on every
-  # invocation, tagged or not. Positioned after import_role, this assertion
-  # would only catch a bad value after the role had already written it into
-  # both files -- too late. Guarded with `is defined` so it is a no-op
-  # whenever these two vars are not the concern of a given run (they always
-  # are on prod today, since host_keys already wires them to the live
-  # client's existing vault entries).
+  # of this PR): a PLAIN, UNTAGGED run of this playbook (Option A in
+  # RUNBOOK_1246.md -- the normal, primary deploy path) executes import_role
+  # unconditionally, which re-renders BOTH settings/keys/host.py AND
+  # deploy/prod.wsgi from host_keys. Positioned after import_role, this
+  # assertion would only catch a bad value after the role had already
+  # written it into both files -- too late. (A `--tags google-oauth`-only
+  # invocation skips import_role entirely, going straight to the
+  # google-oauth-tagged tasks below -- accurate per Codex round-2 review,
+  # which flagged an earlier draft of this comment as overstating this.)
+  # Guarded with `is defined` so this assertion is a no-op whenever these
+  # two vars are not the concern of a given run (they always are on prod
+  # today, since host_keys already wires them to the live client's
+  # existing vault entries).
   - name: "Preflight: if a Google-OAuth vault value is set, it must not be empty/whitespace"
     assert:
       that:
