@@ -178,6 +178,10 @@ BrowserMatch "MSIE [17-9]" ssl-unclean-shutdown
 
 ErrorLog "|/usr/bin/cronolog /var/log/apache2/%Y%m%d_error.log"
 LogLevel warn
-CustomLog "|/usr/bin/cronolog /var/log/apache2/%Y%m%d_access.log" combined
+# "combined" plus %D (time to serve the request, in microseconds).
+# %D is appended LAST so every existing field keeps its position and any
+# tooling that parses these logs positionally continues to work unchanged.
+LogFormat "%h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\" %D" combined_time
+CustomLog "|/usr/bin/cronolog /var/log/apache2/%Y%m%d_access.log" combined_time
 
 </VirtualHost>
