@@ -77,7 +77,7 @@
 
 - name: Enable SSL rewrite headers
   become: yes
-  command: a2enmod ssl rewrite headers
+  command: a2enmod ssl rewrite headers logio
   notify: 
     - restart apache
 

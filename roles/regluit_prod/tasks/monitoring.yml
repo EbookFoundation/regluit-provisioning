@@ -19,3 +19,26 @@
     minute: "*/5"
     job: "/usr/local/sbin/mem_alert.sh"
     user: root
+
+# Wedged-wsgi-worker auto-heal (Gluejar/regluit#1204).
+# A daemon process whose WSGI script fails to load (import-time error during
+# django.setup()) serves nothing but 500s until killed — mod_wsgi never
+# restarts it on its own, and Django emits no error emails in this state.
+# The watcher kills such processes (mod_wsgi respawns them) and emails an alert.
+
+- name: Install wedged-wsgi-worker watcher script
+  become: yes
+  template:
+    src: wsgi_wedge_watch.sh.j2
+    dest: /usr/local/sbin/wsgi_wedge_watch.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule wedged-wsgi-worker check (every 2 min)
+  become: yes
+  ansible.builtin.cron:
+    name: "wsgi-wedge-watch"
+    minute: "*/2"
+    job: "/usr/local/sbin/wsgi_wedge_watch.sh"
+    user: root
