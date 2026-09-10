@@ -42,18 +42,19 @@
     dest: "{{ project_path }}/deploy/prod.wsgi"
     owner: "{{ user_name }}"
     # group www-data + 0640: prod.wsgi embeds plaintext secrets (host_keys as
-    # env exports). Was 0664 (world-readable). The mod_wsgi daemon runs as
-    # www-data (and some procs as {{ user_name }}); both are covered here —
-    # owner reads as ubuntu, daemon reads via the www-data group — with the
-    # world bit removed. Verified on prod 2026-07-01: (wsgi:regluit) procs run
-    # as both ubuntu and www-data. Mirrors the 0600 hardening on .my.cnf.
+    # env exports). Was 0664 (world-readable). WSGIDaemonProcess sets no
+    # user=/group=, so the (wsgi:regluit) daemons run as APACHE_RUN_USER
+    # (www-data) and read the script via the www-data group; the owner
+    # ({{ user_name }}) keeps read/write; the world bit is removed.
+    # Checked read-only 2026-09-10 on prod (4 daemons) and test (2 daemons):
+    # all www-data:www-data. Mirrors the 0600 hardening on .my.cnf.
     group: www-data
     mode: 0640
   no_log: true          # renders vault secrets (host_keys: SECRET_KEY, AWS, SES,
                         # OAuth, Turnstile) as env exports — never log / never --diff.
-                        # This was the ONE secret-rendering task missing no_log;
-                        # a `--check --diff` drift audit leaked all of them into an
-                        # AI transcript on 2026-07-01 (security-private incident).
+                        # This was the last secret-rendering task in this role
+                        # missing no_log; a `--check --diff` drift audit leaked
+                        # them into an AI transcript on 2026-07-01.
 
 - name: Remove apache2 logrotate file
   become: yes
