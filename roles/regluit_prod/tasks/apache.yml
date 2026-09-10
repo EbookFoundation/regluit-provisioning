@@ -41,8 +41,20 @@
     src: prod.wsgi.j2
     dest: "{{ project_path }}/deploy/prod.wsgi"
     owner: "{{ user_name }}"
-    group: "{{ user_name }}"
-    mode: 0664
+    # group www-data + 0640: prod.wsgi embeds plaintext secrets (host_keys as
+    # env exports). Was 0664 (world-readable). WSGIDaemonProcess sets no
+    # user=/group=, so the (wsgi:regluit) daemons run as APACHE_RUN_USER
+    # (www-data) and read the script via the www-data group; the owner
+    # ({{ user_name }}) keeps read/write; the world bit is removed.
+    # Checked read-only 2026-09-10 on prod (4 daemons) and test (2 daemons):
+    # all www-data:www-data. Similar in spirit to the 0600 .my.cnf hardening,
+    # but keeps group read for the daemon.
+    group: www-data
+    mode: '0640'
+  no_log: true          # renders vault values (host_keys: SECRET_KEY, AWS, SES,
+                        # OAuth, Turnstile) as env exports. no_log suppresses this
+                        # task's normal result and diff output; it is not global
+                        # redaction. Was the last such render in this role without it.
 
 - name: Remove apache2 logrotate file
   become: yes
