@@ -37,6 +37,19 @@
 
 - name: Create WSGI Script
   become: yes
+  # tags: [config] — this is the third and last render of vault credentials in
+  # this role; the other two ("Copy django settings template" -> settings/prod.py
+  # and "Copy key templates to keys directory" -> settings/keys/host.py) are both
+  # already tags: [config]. Without a tag here, prod.wsgi could only be
+  # re-rendered by a full, untagged setup-prod.yml run, so a credential rotation
+  # updated settings/keys/host.py while leaving prod.wsgi holding the OLD value.
+  # That drift is not cosmetic: host.py renders each key as
+  #   KEY = os.environ.get('KEY', '<vault value>')
+  # while prod.wsgi does os.environ['KEY'] = '<vault value>' before Django loads,
+  # so for the Apache/mod_wsgi process the prod.wsgi value WINS over host.py.
+  # Celery never reads prod.wsgi and so keeps using host.py -- which is how the
+  # two can disagree with no visible error until a send or an upload fails.
+  tags: [config]
   template:
     src: prod.wsgi.j2
     dest: "{{ project_path }}/deploy/prod.wsgi"
@@ -55,6 +68,13 @@
                         # OAuth, Turnstile) as env exports. no_log suppresses this
                         # task's normal result and diff output; it is not global
                         # redaction. Was the last such render in this role without it.
+  # Only apache: the mod_wsgi daemon is the sole reader of prod.wsgi (apache.conf
+  # points WSGIScriptAlias at it and injects no SetEnv of its own). celeryd and
+  # celerybeat never load this file -- they read settings/keys/host.py -- so the
+  # celery handlers would be a no-op here. Restarting apache is what makes a
+  # freshly rendered credential actually reach the running web processes.
+  notify:
+    - restart apache
 
 - name: Remove apache2 logrotate file
   become: yes
