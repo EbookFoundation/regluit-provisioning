@@ -37,6 +37,21 @@
 
 - name: Create WSGI Script
   become: yes
+  # tags: [config] — this is the third and last render of vault credentials in
+  # this role; the other two ("Copy django settings template" -> settings/prod.py
+  # and "Copy key templates to keys directory" -> settings/keys/host.py) are both
+  # already tags: [config]. Without a tag here, prod.wsgi could only be
+  # re-rendered by a full, untagged setup-prod.yml run, so a credential rotation
+  # updated settings/keys/host.py while leaving prod.wsgi holding the OLD value.
+  # That drift is not cosmetic: host.py renders each name as
+  #   NAME = os.environ.get('NAME', '<rendered>')
+  # while prod.wsgi assigns os.environ['NAME'] before Django loads. So for the
+  # names in host_keys -- not for the environment as a whole -- the prod.wsgi
+  # value takes precedence over host.py's fallback in the mod_wsgi process.
+  # Celery never loads prod.wsgi (celeryd.service runs `celery -A regluit`), so
+  # it keeps host.py's value: that is how the two can disagree with no visible
+  # error until a send or an upload fails.
+  tags: [config]
   template:
     src: prod.wsgi.j2
     dest: "{{ project_path }}/deploy/prod.wsgi"
@@ -55,6 +70,24 @@
                         # OAuth, Turnstile) as env exports. no_log suppresses this
                         # task's normal result and diff output; it is not global
                         # redaction. Was the last such render in this role without it.
+  # Validation FIRST, then the restart. Under --tags config the "Create apache
+  # config" task above is skipped, so nothing else notifies "validate apache
+  # config" -- and a handler runs only when notified. Defining validate before
+  # restart in handlers/main.yml fixes their relative ORDER, it does not make
+  # validation a prerequisite. Without this line a tagged run could bounce
+  # apache without ever configtesting what is on disk, turning a working server
+  # into an outage if that config (or a cert path it names) is broken.
+  #
+  # apache only: celeryd/celerybeat never load prod.wsgi, so notifying them here
+  # would restart them for nothing -- not a no-op, just pointless. The host.py
+  # render already notifies both where it matters (tasks/main.yml).
+  #
+  # The restart makes pickup deterministic rather than being the only path: in
+  # daemon mode mod_wsgi may recycle the daemon on a later request when the
+  # script file changes, which can happen before Ansible reaches its handlers.
+  notify:
+    - validate apache config
+    - restart apache
 
 - name: Remove apache2 logrotate file
   become: yes
