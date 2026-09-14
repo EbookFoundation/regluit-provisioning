@@ -1,7 +1,7 @@
 # PLAN — a sustainable course for unglue.it ops (indexes, provisioning, cleanup)
 
-**Author**: unglueit-plan-0914 (Claude Opus, planner — read-only) · **Written**: 2026-09-14, rev 4.2 ~12:15 PT (cattle-not-pets revision, per RY via the CoS 11:53)
-**For**: RY + the CoS to execute later · **Status**: Codex LGTM on rev 4.1 (12:10 PT; small post-LGTM fixes = rev 4.2, noted in the log); awaiting CoS review — not yet executed
+**Author**: unglueit-plan-0914 (Claude Opus, planner — read-only) · **Written**: 2026-09-14, rev 5.2 ~12:25 PT (cattle-not-pets revision + RY additions, via the CoS 11:53 and 12:11)
+**For**: RY + the CoS to execute later · **Status**: Codex LGTM on rev 5.1 (12:21 PT; small post-LGTM fixes = rev 5.2, noted in the log); awaiting CoS review — not yet executed
 **Public-repo note**: written to be committable to a public repo. Credential specifics (which keys,
 their state, fingerprints) are deliberately left out; they live in the private security tracker
 and the vault.
@@ -39,8 +39,10 @@ For the two indexes, I recommend applying them **by hand over SSH, one migration
 written one-time exception**, after re-rehearsing on test (now on MySQL 8.4 — the 9/10 rehearsal was
 on 8.0). The hand commands are what the playbook would run, so the playbook adds repeatability, not
 safety, for this change; and a live-table index build is the wrong place for new automation's first
-production run. Deleting the old MySQL 8.0 instance gets its own go/no-go the next day, after the
-indexes have been observed and current production's backups are confirmed.
+production run. The indexes live in the database, so later playbook runs or server rebuilds won't lose
+them (§3b, "Durability"). Deleting the old MySQL 8.0 instance becomes a **scheduled step** (default
+Fri 9/18, 09:00) with explicit go criteria: indexes settled, no regression, a real restore test of
+current production's backups, and Eric told at the 9/17 call.
 
 The caveat: this plan is built from notes, repo reads, and session records. Several server facts
 (exact venv layout, Django version actually installed, which package names resolve on 24.04, test's
@@ -61,6 +63,28 @@ RY, 2026-09-14 (as quoted in [#74](https://github.com/EbookFoundation/regluit-pr
 
 Eric's only requirement (relayed via the CoS, 2026-09-14): **the right logs are saved, in a place he
 understands, documented in the playbook.**
+
+**This is a pattern, not a one-off.** "Production built or run from something that never made it back
+to the main branch" has multiple documented manifestations in 2026 — largely from the same unreconciled
+June cutover, which is exactly why it keeps resurfacing:
+- **App repo, June**: prod was deploying the ad-hoc `prod-green` app branch; on 6/18
+  [Gluejar/regluit#1171](https://github.com/Gluejar/regluit/pull/1171) aligned **master** to the deployed
+  SHA (the production-branch release and deploy repoint were separate steps) — dev-journal 2026-06-18.
+- **Provisioning, June → today**: the 6/17 cutover built prod from `feature/prod-green`, the lineage of
+  [PR #25](https://github.com/EbookFoundation/regluit-provisioning/pull/25) (python_version
+  parametrization that grew into the cutover), **closed unmerged 9/10**. Consequences since: the
+  6/26 silent Beat-schedule revert (fixed by
+  [#55](https://github.com/EbookFoundation/regluit-provisioning/pull/55)) and 9/14's `python3.8` failure.
+- **OOM hardening**: [#45](https://github.com/EbookFoundation/regluit-provisioning/issues/45) records
+  that "production was running config that never made it back to `master`," so applying the saved
+  recipe "could have broken TLS"; the 8/18 box-local certbot fix
+  ([#67](https://github.com/EbookFoundation/regluit-provisioning/issues/67)) is the same shape.
+(I checked the provisioning repo's closed-unmerged PRs and found nothing earlier than 2026 that fits;
+older history outside GitHub wasn't searched.) Regular rebuilds from master are the structural answer:
+**monthly rebuilds expose the drift that their acceptance checks exercise** — anything a rebuilt box
+needs but master lacks shows up as a failed or hand-assisted build. Precisely: test's rebuild shares
+the existing test database, so it doesn't prove every piece of production state is reproducible; S0
+and §6b cover that side.
 
 What that means for this plan:
 - A playbook is proven by **building from it on a schedule**, not by dry-running it (§6c).
@@ -249,6 +273,30 @@ the deployed commit is the inspected commit:
 Ansible"; the checked-in task has no `become` and neither does its play, so Ansible would run it as
 `ubuntu` (absent a CLI/config override, which the 9/14 runs didn't use). PC-3 records log-file
 ownership in `/var/log/regluit` to confirm `ubuntu` can write there.
+
+**Durability of the hand-applied indexes** (RY asked whether a later or revised playbook run could lose
+them). Roughly: no — the indexes live in the database, not on the web box, and Django will have
+recorded them as applied. More precisely:
+- The indexes are part of the `core_work` table in RDS (`production-2024`). No playbook task drops
+  them; the replacement-build procedure (§6c, §6d, with `run_migrations=false`) doesn't touch the
+  schema at all, and rebuilding the web box doesn't touch RDS.
+- A hand-run `manage.py migrate core 0033/0034` writes the same `django_migrations` rows a playbook
+  run would. So `migrate.yml`, a future full role run, or a rebuilt box all see 0033/0034 as
+  **already applied** and do nothing with them.
+- The ways they could go away are all deliberate or visible: (1) a rollback (`migrate core 0033` /
+  `0032`, or a hand `DROP INDEX`); (2) a future code change that removes them from `Work.Meta.indexes`
+  plus a generated `RemoveIndex` migration — which `migrate.yml`'s exact-plan gate would show before it
+  ran; (3) running the site on a database that never had them — a brand-new database (not planned), or
+  a restore from a snapshot/point-in-time **before** they were applied (e.g.
+  `production-2024-pre-mysql84-20260912`, or refreshing test's DB from an older prod snapshot). In case
+  (3) the `django_migrations` rows would normally be missing too, so `migrate.yml` inspect **reports
+  0033/0034 as pending** (inspect never applies anything). The response is: reconcile physical state
+  under §3c — a restore point that fell between a DDL finishing and Django recording it, or during an
+  interrupted rollback, can leave index and record disagreeing — then apply through the normal
+  `migrate.yml` gate as a separately approved step. Visible, not silent.
+- **Verification** (added to W2.1, the first `migrate.yml` run on prod, and to every monthly test
+  rebuild, §6c step 4): `DJ showmigrations core` shows both `[X]` **and** the §3c physical query shows
+  both index names with their expected columns.
 
 **The exception, as it should be recorded** (paste into `SESSION_SUMMARY.md` and a #1255 comment):
 > EXCEPTION 2026-09-15-A — hand-applied core.0033 and core.0034 on production over SSH, one at a time.
@@ -446,19 +494,72 @@ the `CREATE INDEX`, excluding `ID = CONNECTION_ID()`), `CALL mysql.rds_kill_quer
 step 1), then reconcile (§3c) before anything else. If a lock-wait timeout fires **twice** for the
 same migration, stop for the day; find the blocker, don't loop.
 
-### Window 1b — Wed 9/16 (or later): old MySQL 8.0 deletion, own go/no-go (RY)
+### Window 1b — scheduled: old MySQL 8.0 deletion (default **Fri 9/18, 09:00 PT**; RY hands-on)
 
-Preconditions: indexes observed ≥ 24 h without regression; PC-1 shows old1 with 0 connections for
-7 days; PC-5 found no consumer; prod `BackupRetentionPeriod` ≥ 7 and `LatestRestorableTime` within
-the last 10 min — **this, not old1, is the recovery path for current data** (point-in-time restore
-to a new instance; accepted data-loss window = up to `LatestRestorableTime` lag, ~5 min).
+RY: *"do that after we're sure things are ok --> might mean scheduling."* So this is a **calendar-held
+step with explicit go criteria**, not "a day later." (The CoS relay said "Fri 9/19"; 9/19 is a Saturday,
+so the default is Friday **9/18**. RY picks the date — D2.) The CoS files the hold; nothing is created
+on RY's calendar by the planner.
+
+**Go criteria — all must be true at the go/no-go, recorded in `SESSION_SUMMARY.md`:**
+1. **Indexes applied ≥ 24 h** (by 9/18 it would be ~72 h if W1 runs Tue 9/15) and the W2.1-style
+   durability check passes (both `[X]`, both index names present).
+2. **No regression since the indexes**: CloudWatch `CPUUtilization` (hourly max/avg),
+   `DatabaseConnections`, `ReadLatency`/`WriteLatency` for the period since W1 are no worse than the
+   9/12–9/14 baseline in `PREFLIGHT_2026-09-14.md`; app error log shows no new DB error class; `/`,
+   `/free/`, `/accounts/login/` 200.
+3. **Current prod is verified restorable** — old1 is not the recovery path for current data, prod's own
+   backups are: `BackupRetentionPeriod` ≥ 7, `LatestRestorableTime` within the last 10 min, **and a
+   real restore test** on Thu 9/17 (owner: RY runs, sibling prepares and verifies; **cleanup deadline:
+   same day 17:00 PT**, whether validation passed or failed). The restore command is written out and
+   reviewed before the day, with every choice explicit rather than defaulted: `--profile gluejar_member
+   --region us-east-1`; `--source-db-instance-identifier production-2024`;
+   `--target-db-instance-identifier regluit-restoretest-20260917`; `--restore-time` = a recorded UTC
+   time **after W1.6 completed** (both migrations applied); `--db-instance-class` = a smaller class
+   checked for compatibility with the source's storage type/IOPS; `--no-multi-az`;
+   `--no-publicly-accessible`; `--db-subnet-group-name` and `--vpc-security-group-ids` = prod's DB
+   subnet group and DB security group IDs (read from `describe-db-instances`); `--db-parameter-group-name
+   regluit-prod-mysql84` and prod's option group; `--no-deletion-protection`; backup retention: if the
+   installed CLI's restore command accepts a retention option, set the minimum; otherwise record the
+   inherited value (**verify** with `aws rds restore-db-instance-to-point-in-time help`), and the delete
+   removes automated backups (`--delete-automated-backups`, the CLI default, stated explicitly). **Cost**: a smaller class
+   still restores prod's full **allocated storage** (200 GB on 9/12) — estimate compute, storage, any separately
+   billed IOPS/throughput, and backup charges for the hours kept, before running (expected: a few
+   dollars). Before connecting to `regluit-restoretest-20260917`: `describe-db-instances` for
+   that literal identifier shows `available`, Single-AZ, not publicly accessible, the expected subnet
+   group/security groups/parameter group, and its **endpoint address** (recorded).
+   **Probe without any chance of querying prod**: from the prod web box, a one-off script run with
+   `DJ shell` that builds a **separate connection** from a deep copy of `settings.DATABASES['default']`
+   with `HOST` set to the recorded temporary endpoint, rejects any `OPTIONS` that set host or socket,
+   keeps TLS options, opens it under its own alias (never mutating or using the default connection or
+   the ORM), and on that cursor: asserts the connection's effective host equals the recorded
+   temporary endpoint (records `@@hostname` for diagnostics only — it isn't an RDS endpoint) and
+   `SELECT DATABASE()` equals the expected schema, then prints only non-secret
+   identity and counts, closing the connection in `finally`. Checks, with tolerances fixed beforehand:
+   `core_work` row count within ±1% of the same count taken on prod at the restore time;
+   `django_migrations` has both 0033 and 0034; the §3c physical query shows both indexes with their full
+   definitions. Then, immediately after re-verifying the identifier:
+   `aws rds delete-db-instance --db-instance-identifier regluit-restoretest-20260917
+   --skip-final-snapshot --delete-automated-backups`, and poll until `DBInstanceNotFound` — a describe
+   that fails for credentials/network reasons is **not** deletion evidence. The temporary instance never
+   appears in any app settings. What this proves: the backups restore, and the sampled checks hold at the
+   recorded point — not full application recovery or production recovery time. (Alternative if RY
+   prefers: metadata-only check — D2 — in which case restorability is asserted, not proven.)
+4. **Old1 unused**: `DatabaseConnections` for old1 is 0 at **every** datapoint since the 9/12 16:04 UTC
+   switchover (a missing datapoint is not a zero — gaps are a no-go), and PC-5 found no consumer. The
+   switchover was 09:04 PT 9/12, so Fri 9/18 09:00 PT is just under 6 days (5 d 23 h 56 m), **not the
+   7 days rev 3 asked for** — the Friday default revises that criterion and needs RY's explicit yes
+   (D2). Seven full days completes Sat 9/19 09:04 PT; the weekday fallback is Mon 9/21 09:00 PT (~9 days).
+5. **Eric informed** (9/17 call) of the actual approved deletion date and that the final snapshot is
+   kept; updated if the date moves.
+Any criterion false → no-go; pick a new date.
 
 | # | Step | Verify | Rollback | Stop if |
 |---|---|---|---|---|
 | W1b.1 | `aws sts get-caller-identity`; describe B/G `bgd-jdgebq3wemv2dony` | status `SWITCHOVER_COMPLETED`, source `…old1`, target `production-2024` | — | anything else |
 | W1b.2 | `aws rds delete-blue-green-deployment --blue-green-deployment-identifier bgd-jdgebq3wemv2dony` (**no `--delete-target`**) | describe → not found; both instances `available` | none needed | error |
 | W1b.3 | Check old1 `PendingModifiedValues` is empty; then `modify-db-instance --db-instance-identifier production-2024-old1 --no-deletion-protection --apply-immediately` | `DeletionProtection=false`, no other attribute changed | re-enable protection | pending modifications present (would apply too) |
-| W1b.4 | Read the identifier back aloud; `delete-db-instance --db-instance-identifier production-2024-old1 --final-db-snapshot-identifier production-2024-old1-final-20260916` | snapshot `creating`→`available`; old1 `deleting`→`DBInstanceNotFound`; `production-2024` untouched, deletion protection still ON; site 200 | restore old1 from final snapshot (hours; it's 8.0 data frozen at 9/12) | delete call errors → **re-enable deletion protection** on old1 unless deliberately retrying |
+| W1b.4 | Read the identifier back aloud; `delete-db-instance --db-instance-identifier production-2024-old1 --final-db-snapshot-identifier production-2024-old1-final-<YYYYMMDD of the go date>` | snapshot `creating`→`available`; old1 `deleting`→`DBInstanceNotFound`; `production-2024` untouched, deletion protection still ON; site 200 | restore old1 from final snapshot (hours; it's 8.0 data frozen at 9/12) | delete call errors → **re-enable deletion protection** on old1 unless deliberately retrying |
 | W1b.5 | Next day: Cost Explorer shows the MySQL 8.0 Extended Support line stopped. Snapshots bill storage only. Keep `production-2024-pre-mysql84-20260912` ~2 weeks, then decide | recorded | — | line continues → look for any remaining 8.0 *instance* |
 
 ### Credential track — independent, by the 9/18 W128 deadline (RY + Eric decisions)
@@ -476,7 +577,7 @@ the windows.
 
 | # | Step | Verify | Rollback | Stop if |
 |---|---|---|---|---|
-| W2.1 | `migrate.yml` **inspect** on prod (`--check`, then real — both read-only) | reports nothing pending; identity printed; `changed=0`. Exception 2026-09-15-A now expires | none | anything pending not explained |
+| W2.1 | `migrate.yml` **inspect** on prod (`--check`, then real — both read-only) | reports nothing pending; identity printed; `changed=0`; **index durability check**: `showmigrations core` 0033/0034 `[X]` and `expected_indexes` (§3a step 7) finds both index names with expected columns. Exception 2026-09-15-A now expires | none | anything pending not explained; either index missing → stop, §3c |
 | W2.2 | `setup-prod.yml --tags bootstrap,python --check`, then real | `.pth` unchanged; assertion ok | restore saved `.pth` copies (PC-3) | any change/failure |
 | W2.3 | **W77 on test, rollback made real first**: list the installed set `dpkg -l 'python3.12*' 'libpython3.12*'` at `.15`; `apt-get download` each at `3.12.3-1ubuntu0.15` into `/var/cache/regluit-rollback/` (APT authenticates via signed repository metadata + package hashes; download fails if they don't match) and record package/version/arch/SHA-256 of each file, re-verified with `sha256sum -c` before any rollback; `apt-get -s install <each>=<.16 version>` (exact target version, simulated) — confirm nothing unrelated is pulled; then real install with exact versions; restart apache2/celeryd/celerybeat | all at `.16`; services active; `/`, `/free/`, `/accounts/login/` 200; `venv/bin/python -c 'import ssl, sqlite3'` | **rehearse on test now**: `dpkg -i /var/cache/regluit-rollback/*.deb` (simulate with `apt-get -s install ./…deb` first), restart, smoke; then re-apply `.16` | simulation pulls unrelated packages; staged `.deb`s incomplete; interrupted apt → `dpkg --configure -a` then reassess before anything else |
 | W2.4 | W77 on prod — same procedure, staged `.deb`s first, ≥ 1 h after test is clean | same + CloudWatch/app errors 30 min | staged `.deb`s | same |
@@ -664,7 +765,8 @@ with RY's go for the AWS steps, ~half a day of wall time, mostly waiting):
    the Site row (domain *or* display name), so on replacement builds C5 **skips it and asserts the
    existing Site values read-only** instead. Identity assertion: DB host is test's, never prod's.
 4. Smoke the new box without the public IP: HTTP by host header for `/`, `/free/`, a work page, login;
-   `migrate.yml` inspect = nothing pending; a log-shipping test upload to the test prefix. A **Celery round-trip** is deferred to step 5f because the new box's
+   `migrate.yml` inspect = nothing pending, **with the index durability check** (0033/0034 `[X]` and
+   both index names present on test's DB — §3b); a log-shipping test upload to the test prefix. A **Celery round-trip** is deferred to step 5f because the new box's
    workers are deliberately disabled until then. **Certificate issuance** is a separate constraint:
    HTTP-01 validation reaches whichever box holds the IP, so the sequence chosen in C4 decides: either (a) securely transfer the
    current valid certbot lineage to the new box before TLS smoke (then smoke HTTPS with correct SNI via
@@ -740,7 +842,11 @@ JSON invocation — enforced by the PR-A `deploy.yml` gate.
 | W1b | A rare consumer still used old1 | PC-5; 7-day connections | Stop before delete |
 | W1b | `--apply-immediately` applies other pending modifications | `PendingModifiedValues` | Check empty first |
 | W1b | Delete fails after protection removed | CLI error | Re-enable protection |
-| W1b | Current prod data loss later | — | Recovery is prod PITR (verified retention/restorable time), not old1 |
+| W1b | Current prod data loss later | — | Recovery is prod PITR, not old1 — demonstrated by the 9/17 restore test if run (D2), otherwise only asserted from metadata |
+| W1b restore test | Probe queries prod instead of the restored copy, falsely "proving" the restore | endpoint + `@@hostname` + `DATABASE()` assertions on a separate connection | Separate alias from a deep copy; reject host/socket `OPTIONS`; never the default connection |
+| W1b restore test | Temporary instance left running (storage cost is prod's full allocation), reachable, or confused with prod | literal-identifier describe; `DBInstanceNotFound` by 17:00 | Explicit restore flags (private, Single-AZ, prod SG/subnets); cleanup on pass **or** fail; credential/network errors aren't deletion evidence |
+| W1b | Friday default deletes old1 before 7 full days of zero connections | datapoint count since switchover | Explicit RY yes for the revised criterion, or move to Mon 9/21 |
+| Indexes (later) | Lost by a rollback, a `RemoveIndex` migration, or running on a DB restored from before W1 | durability check in W2.1 and every monthly test rebuild | Deliberate/visible paths only; missing `django_migrations` rows show as pending in `migrate.yml` inspect → reconcile under §3c → separately approved apply |
 | PR-A deploy gate | Branch moves between inspect and checkout | `HEAD != deploy_sha` | Checkout the resolved SHA, verify after |
 | PR-A deploy gate | Gate blocks an urgent hotfix | pre-checkout failure | `migrations_acknowledged=true` override, documented |
 | PR-A migrate.yml | Rollback target unapplies dependents in other apps | exact `--plan` ≠ `expected_plan` | Play stops before applying |
@@ -780,8 +886,12 @@ JSON invocation — enforced by the PR-A `deploy.yml` gate.
 
 - **D1 — indexes now by hand, or wait for `migrate.yml`?** *Default: by hand in Window 1, one
   migration at a time, under exception 2026-09-15-A, after the test 8.4 re-rehearsal.*
-- **D2 — old1 deletion timing.** *Default: Window 1b (≥ 24 h after indexes, own go/no-go).* Costs ~a
-  day of Extended Support (~$18) for a cleaner separation.
+- **D2 — old1 deletion date and restore test.** *Default: scheduled Fri 9/18 09:00 PT, calendar-held,
+  go criteria in Window 1b, with a real point-in-time restore test on Thu 9/17.* Friday means just under
+  6 days of zero old1 connections rather than rev 3's 7 — **RY must say yes to that revision**, or
+  choose Mon 9/21 09:00 PT (the weekday after 7 full days, ~9 days). Waiting costs roughly $18/day of MySQL 8.0 Extended Support
+  (~$555/month) for "sure things are ok." Alternative to the restore test: metadata-only backup check
+  (faster, weaker — restorability asserted, not demonstrated).
 - **D3 — pip `latest` → `present` in PR-B?** *Default: yes*, with the requirements-vs-installed
   reconciliation before any full run.
 - **D4 — dead-host playbooks: parametrize or delete?** *Default: parametrize now; delete under #56.*
@@ -909,5 +1019,41 @@ Non-blocking corrections **applied after the LGTM (rev 4.2, not re-reviewed)**:
 - `set_site_domain` can write (creates/updates domain or name) → skipped on replacement builds, with a
   read-only assertion instead (C5).
 - Celery round-trip deferral (workers disabled) separated from the HTTP-01 certificate constraint.
+
+### Rev 5 — RY additions relayed by the CoS (12:11)
+Added: "Durability of the hand-applied indexes" (§3b) with a verification step in W2.1 and every monthly
+test rebuild; old-DB deletion made a scheduled, calendar-held step with go criteria and a default date
+(the relay said "Fri 9/19"; 9/19 is a Saturday, so default is **Fri 9/18**); "pattern, not a one-off"
+in the North star with repo history. **Codex round run: yes** — the changes are substantive (a new
+factual claim about migration durability and a new production-adjacent AWS step, the restore test).
+
+### Rev 5, round 1 — 2026-09-14 12:14–12:17 PT — **VERDICT: CHANGES REQUESTED**
+Reviewed only the rev-5 diff. What rev 5.1 did:
+- **B1** restore test left RDS defaults implicit → every restore flag explicit (profile/region, source,
+  literal target, restore time after W1.6, class compatibility, `--no-multi-az`,
+  `--no-publicly-accessible`, prod's subnet group/SGs/parameter + option groups,
+  `--no-deletion-protection`, backup retention), configuration verified before connecting.
+- **B2** the Django probe could silently query prod → separate connection alias from a deep copy,
+  host/socket `OPTIONS` rejected, endpoint/`@@hostname`/`DATABASE()` asserted, no default connection or
+  ORM; restore point fixed after both migrations; tolerances set in advance.
+- **S** cost ignores full allocated storage → noted, estimate required; literal-identifier delete
+  with `--delete-automated-backups`, cleanup deadline 17:00 on pass or fail, network errors aren't
+  deletion evidence.
+- **S** durability overstated recovery ("would be re-applied") → inspect only *reports* pending;
+  reconcile via §3c, then a separately approved apply; "no playbook task touches" qualified.
+- **S** Friday 9/18 is < 7 days after the 9/12 switchover → criterion restated as zero at every
+  datapoint since switchover (gaps = no-go), Friday needs RY's explicit yes, else Mon 9/21.
+- **S** history wording → #1171 aligned *master* only; #55 cited for 6/26; "multiple documented
+  manifestations" of one unreconciled cutover; monthly rebuilds "expose the drift their acceptance
+  checks exercise."
+- **N** metadata-only alternative vs "proven" → risk row made conditional.
+
+### Rev 5, round 2 — 2026-09-14 12:19–12:21 PT — **VERDICT: LGTM**
+Both rev-5 blockers RESOLVED; 3 should-fix + nit RESOLVED, 2 PARTIAL (wording). Non-blocking fixes
+**applied after the LGTM (rev 5.2, not re-reviewed)**: cost estimate includes IOPS/throughput and backup
+charges; durability risk row now says inspect → reconcile → approved apply; the probe asserts the
+effective connection host against the recorded endpoint (`@@hostname` is diagnostic only); Eric is told
+the *actual* approved date; **arithmetic corrected** — Fri 9/18 09:00 PT is just under 6 days after the
+09:04 PT 9/12 switchover (I had written ~5.7), 7 full days is Sat 9/19 09:04 PT, Mon 9/21 is ~9 days.
 
 <!-- cc:2026.09.14 -->
