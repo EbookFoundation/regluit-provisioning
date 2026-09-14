@@ -1,7 +1,7 @@
 # PLAN — a sustainable course for unglue.it ops (indexes, provisioning, cleanup)
 
-**Author**: unglueit-plan-0914 (Claude Opus, planner — read-only) · **Written**: 2026-09-14, rev 5.2 ~12:25 PT (cattle-not-pets revision + RY additions, via the CoS 11:53 and 12:11)
-**For**: RY + the CoS to execute later · **Status**: Codex LGTM on rev 5.1 (12:21 PT; small post-LGTM fixes = rev 5.2, noted in the log); awaiting CoS review — not yet executed
+**Author**: unglueit-plan-0914 (Claude Opus, planner — read-only) · **Written**: 2026-09-14, rev 5.3 ~12:30 PT (cattle-not-pets revision + RY additions + CoS editorial, via the CoS)
+**For**: RY + the CoS to execute later · **Status**: Codex LGTM (rev 5.1) + CoS LGTM (rev 5.2); rev 5.3 editorial, not re-reviewed; RY decides D1/D2/D10 next — not yet executed
 **Public-repo note**: written to be committable to a public repo. Credential specifics (which keys,
 their state, fingerprints) are deliberately left out; they live in the private security tracker
 and the vault.
@@ -9,6 +9,17 @@ and the vault.
 ---
 
 ## 0. Plain-English summary
+
+> **Sequence by week**
+> - **This week (9/14–9/18):** PC-1…PC-5 pre-checks (PC-3/PC-4 **tonight, Mon 9/14**, read-only) →
+>   **W1** indexes on Tue 9/15 → **L0** interim log archive (outside W1's observation hour) →
+>   restore test **Wed 9/16** → credential track by the **9/18** W128 deadline → **old1 go/no-go**
+>   (default Fri 9/18 09:00 PT; needs RY's OK on the shorter window, else Mon 9/21).
+> - **This month:** PR-A (`migrate.yml` + deploy gate) and PR-B (Python pins) with their test proofs
+>   → Window 2 (first `migrate.yml` inspect on prod, W77) → **S0 / PR-C** state inventory → **PR-D** logs
+>   → **C1p** logs live on current prod.
+> - **Next:** C4 (#67 certbot) – C5 (rebuild safety switches) – C6 (launch script) → **T1** first
+>   from-scratch test rebuild → monthly **T+** → **P1** prod rebuilt Blue/Green-style.
 
 Roughly: the plan on 9/14 was "deploy the new `/free/` indexes, then run the big provisioning
 playbook to apply the database change." The big playbook broke on its first line, and a closer look
@@ -435,6 +446,11 @@ dev-journal for durable lessons.
   `PendingModifiedValues` on prod and old1.
 - **PC-2 test identity/state**: SHA; DB host+name positively the test endpoint; `DJ showmigrations core`;
   §3c physical query on test.
+*PC-3 and PC-4 run **tonight, Mon 9/14**, read-only, so W1.2's gate facts (`PROCESS` grant,
+`mysql.rds_kill_query` access, `performance_schema` on/off, storage headroom) are known before Tuesday.
+Status 12:25 PT: **not yet run** — the planner's attempt was blocked by the Claude Code auto-mode
+classifier ("Production Reads") and was not retried. Needs RY to run them or approve a session to.
+Results get recorded with timestamps in §1. If they aren't in hand by Tue 09:00, W1 waits.*
 - **PC-3 host facts** (prod + test): `lsb_release -d`; `python3 --version`; `venv/bin/python --version`;
   `DJ version`; `readlink -f venv/bin/python`; `ls venv/lib/`; `*.pth` under `python3.12/site-packages`
   (save copies); `python3 -c 'import apt'`; `dpkg -l 'python3.12*' 'libpython3.12*'`; `apt-cache policy`
@@ -510,11 +526,11 @@ on RY's calendar by the planner.
    `/free/`, `/accounts/login/` 200.
 3. **Current prod is verified restorable** — old1 is not the recovery path for current data, prod's own
    backups are: `BackupRetentionPeriod` ≥ 7, `LatestRestorableTime` within the last 10 min, **and a
-   real restore test** on Thu 9/17 (owner: RY runs, sibling prepares and verifies; **cleanup deadline:
+   real restore test** on **Wed 9/16** (moved off Thu 9/17, RY's heaviest day; owner: RY runs, sibling prepares and verifies; **cleanup deadline:
    same day 17:00 PT**, whether validation passed or failed). The restore command is written out and
    reviewed before the day, with every choice explicit rather than defaulted: `--profile gluejar_member
    --region us-east-1`; `--source-db-instance-identifier production-2024`;
-   `--target-db-instance-identifier regluit-restoretest-20260917`; `--restore-time` = a recorded UTC
+   `--target-db-instance-identifier regluit-restoretest-20260916`; `--restore-time` = a recorded UTC
    time **after W1.6 completed** (both migrations applied); `--db-instance-class` = a smaller class
    checked for compatibility with the source's storage type/IOPS; `--no-multi-az`;
    `--no-publicly-accessible`; `--db-subnet-group-name` and `--vpc-security-group-ids` = prod's DB
@@ -525,7 +541,7 @@ on RY's calendar by the planner.
    removes automated backups (`--delete-automated-backups`, the CLI default, stated explicitly). **Cost**: a smaller class
    still restores prod's full **allocated storage** (200 GB on 9/12) — estimate compute, storage, any separately
    billed IOPS/throughput, and backup charges for the hours kept, before running (expected: a few
-   dollars). Before connecting to `regluit-restoretest-20260917`: `describe-db-instances` for
+   dollars). Before connecting to `regluit-restoretest-20260916`: `describe-db-instances` for
    that literal identifier shows `available`, Single-AZ, not publicly accessible, the expected subnet
    group/security groups/parameter group, and its **endpoint address** (recorded).
    **Probe without any chance of querying prod**: from the prod web box, a one-off script run with
@@ -539,7 +555,7 @@ on RY's calendar by the planner.
    `core_work` row count within ±1% of the same count taken on prod at the restore time;
    `django_migrations` has both 0033 and 0034; the §3c physical query shows both indexes with their full
    definitions. Then, immediately after re-verifying the identifier:
-   `aws rds delete-db-instance --db-instance-identifier regluit-restoretest-20260917
+   `aws rds delete-db-instance --db-instance-identifier regluit-restoretest-20260916
    --skip-final-snapshot --delete-automated-backups`, and poll until `DBInstanceNotFound` — a describe
    that fails for credentials/network reasons is **not** deletion evidence. The temporary instance never
    appears in any app settings. What this proves: the backups restore, and the sampled checks hold at the
@@ -842,7 +858,7 @@ JSON invocation — enforced by the PR-A `deploy.yml` gate.
 | W1b | A rare consumer still used old1 | PC-5; 7-day connections | Stop before delete |
 | W1b | `--apply-immediately` applies other pending modifications | `PendingModifiedValues` | Check empty first |
 | W1b | Delete fails after protection removed | CLI error | Re-enable protection |
-| W1b | Current prod data loss later | — | Recovery is prod PITR, not old1 — demonstrated by the 9/17 restore test if run (D2), otherwise only asserted from metadata |
+| W1b | Current prod data loss later | — | Recovery is prod PITR, not old1 — demonstrated by the 9/16 restore test if run (D2), otherwise only asserted from metadata |
 | W1b restore test | Probe queries prod instead of the restored copy, falsely "proving" the restore | endpoint + `@@hostname` + `DATABASE()` assertions on a separate connection | Separate alias from a deep copy; reject host/socket `OPTIONS`; never the default connection |
 | W1b restore test | Temporary instance left running (storage cost is prod's full allocation), reachable, or confused with prod | literal-identifier describe; `DBInstanceNotFound` by 17:00 | Explicit restore flags (private, Single-AZ, prod SG/subnets); cleanup on pass **or** fail; credential/network errors aren't deletion evidence |
 | W1b | Friday default deletes old1 before 7 full days of zero connections | datapoint count since switchover | Explicit RY yes for the revised criterion, or move to Mon 9/21 |
@@ -887,7 +903,7 @@ JSON invocation — enforced by the PR-A `deploy.yml` gate.
 - **D1 — indexes now by hand, or wait for `migrate.yml`?** *Default: by hand in Window 1, one
   migration at a time, under exception 2026-09-15-A, after the test 8.4 re-rehearsal.*
 - **D2 — old1 deletion date and restore test.** *Default: scheduled Fri 9/18 09:00 PT, calendar-held,
-  go criteria in Window 1b, with a real point-in-time restore test on Thu 9/17.* Friday means just under
+  go criteria in Window 1b, with a real point-in-time restore test on Wed 9/16.* Friday means just under
   6 days of zero old1 connections rather than rev 3's 7 — **RY must say yes to that revision**, or
   choose Mon 9/21 09:00 PT (the weekday after 7 full days, ~9 days). Waiting costs roughly $18/day of MySQL 8.0 Extended Support
   (~$555/month) for "sure things are ok." Alternative to the restore test: metadata-only backup check
