@@ -1072,4 +1072,15 @@ effective connection host against the recorded endpoint (`@@hostname` is diagnos
 the *actual* approved date; **arithmetic corrected** — Fri 9/18 09:00 PT is just under 6 days after the
 09:04 PT 9/12 switchover (I had written ~5.7), 7 full days is Sat 9/19 09:04 PT, Mon 9/21 is ~9 days.
 
+### CoS verdict on rev 5.2 (`61de0e5`) — 2026-09-14 ~12:23 PT — **LGTM** (posted on PR #73)
+Rev 5.3 = the CoS's three **editorial** edits, **not re-reviewed by Codex**:
+1. "Sequence by week" box at the top of §0.
+2. PC-3/PC-4 marked "run tonight (Mon 9/14), read-only," so W1.2's gate facts are known before
+   Tuesday. The CoS invited the planner to run them; the attempt was **blocked by the auto-mode
+   classifier ("Production Reads") and not retried** — status recorded in §5; RY runs or approves.
+   W1 waits if they aren't in hand by Tue 09:00.
+3. Restore test default moved from Thu 9/17 to **Wed 9/16** (same criteria and cleanup rule; the
+   temporary identifier is now `regluit-restoretest-20260916`). It still requires a restore point after
+   W1.6, so if W1 slips, the restore test slips with it.
+
 <!-- cc:2026.09.14 -->
