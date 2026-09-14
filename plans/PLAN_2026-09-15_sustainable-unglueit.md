@@ -1,7 +1,7 @@
 # PLAN — a sustainable course for unglue.it ops (indexes, provisioning, cleanup)
 
-**Author**: unglueit-plan-0914 (Claude Opus, planner — read-only) · **Written**: 2026-09-14, rev 3 ~11:25 PT
-**For**: RY + the CoS to execute later · **Status**: Codex LGTM (round 3, 2026-09-14 11:19 PT; two small post-LGTM fixes noted in the log) — not yet executed
+**Author**: unglueit-plan-0914 (Claude Opus, planner — read-only) · **Written**: 2026-09-14, rev 4.2 ~12:15 PT (cattle-not-pets revision, per RY via the CoS 11:53)
+**For**: RY + the CoS to execute later · **Status**: Codex LGTM on rev 4.1 (12:10 PT; small post-LGTM fixes = rev 4.2, noted in the log); awaiting CoS review — not yet executed
 **Public-repo note**: written to be committable to a public repo. Credential specifics (which keys,
 their state, fingerprints) are deliberately left out; they live in the private security tracker
 and the vault.
@@ -24,11 +24,16 @@ So the plan separates two things that were tangled together:
    modes — *inspect* (read-only), *forward*, *rollback* — each gated on the exact plan Django says it
    will execute. `deploy.yml` learns to refuse, before touching the box, a deploy that brings
    migrations nobody acknowledged.
-2. **Making the full playbook trustworthy again** is slower work (existing
-   [provisioning#56](https://github.com/EbookFoundation/regluit-provisioning/issues/56)). We start
-   with a narrow, tested slice (Python version pins, package names, pip behaviour). A dry run is
-   used only to *find* drift; the full playbook is not run for real on production until it has run
-   for real, successfully, on a representative test machine.
+2. **Keeping the playbook working** stops depending on anyone remembering to check it. RY's framing
+   ([#74](https://github.com/EbookFoundation/regluit-provisioning/issues/74)): treat the servers as
+   *cattle, not pets*. **Test is rebuilt from scratch by the playbook every month**, and that rebuild
+   is the standing proof the playbook works. **Prod is replaced, not patched**: build a fresh box from
+   the playbook, smoke it, switch, keep the old box 24 hours, delete it — the same shape as the MySQL
+   upgrade on 9/12. That redefines #56.
+3. **Before any box is treated as replaceable, we list what on it isn't** (a state inventory), and
+   the logs get a proper home: which logs we keep, for how long, shipped off the box to S3, and a
+   README section Eric can read. One finding makes this urgent: the playbook's cleanup cron deletes
+   rotated app logs (including download logs) after 30 days, so an interim archive copy comes first.
 
 For the two indexes, I recommend applying them **by hand over SSH, one migration at a time, under a
 written one-time exception**, after re-rehearsing on test (now on MySQL 8.4 — the 9/10 rehearsal was
@@ -40,7 +45,29 @@ indexes have been observed and current production's backups are confirmed.
 The caveat: this plan is built from notes, repo reads, and session records. Several server facts
 (exact venv layout, Django version actually installed, which package names resolve on 24.04, test's
 current migration state) are marked **verify** and have read-only pre-checks attached. The planner
-did not re-check any of them live.
+did not re-check any of them live. The log-deletion finding comes from master's templates; what the
+live prod box actually runs is also a **verify** item.
+
+---
+
+## North star
+
+RY, 2026-09-14 (as quoted in [#74](https://github.com/EbookFoundation/regluit-provisioning/issues/74)):
+
+> *"we easily let our migration playbooks get stale and we need a more robust way to keep them
+> working well. In many ways what we want is a regular build of our servers, treating them more like
+> 'cattle than pets'. Important part though is making sure that we preserve important cumulated
+> state on the servers -- logs, etc."*
+
+Eric's only requirement (relayed via the CoS, 2026-09-14): **the right logs are saved, in a place he
+understands, documented in the playbook.**
+
+What that means for this plan:
+- A playbook is proven by **building from it on a schedule**, not by dry-running it (§6c).
+- Production changes of the risky kind happen by **replacement**, Blue/Green-style (§6d).
+- **Accumulated state is named, owned, and off the box** before any box is disposable (§6a, §6b).
+- **Guardrail**: same tools — Ansible, Ubuntu, AWS CLI, cron, S3. No platform rewrite (§6e).
+- Near-term work (indexes, `migrate.yml`, W77) still happens, because the next rebuild is weeks away.
 
 ---
 
@@ -65,15 +92,20 @@ did not re-check any of them live.
 | The 9/10 rehearsal of 0033/0034 on test was on MySQL 8.0 and left both indexes applied there | #1255 comments |
 | Test rehearsal timings (1.47M `core_work` rows): 0033 10.3 s, 0034 7.6 s; reverse ~0.3 s each | #1255 comment "Merge gate 2" |
 | Installed Ansible 12.0.0: `raw` skips in check mode; `django_manage` declares no check-mode support (skipped); `pip` with `requirements` predicts `changed=True` regardless | local source read; Codex r1 |
+| Logs live only on the box. Master's `prod.py.j2`: `downloads.log` 20 MB × 9 backups, `unglue.it.log` 5 MB × 5. Master's `cron.yml`: deletes `/var/log/regluit/*.log.*` older than 30 days; Apache daily logs deleted after 14 days; Celery worker log truncated weekly. Live prod values: **verify** (S0) | provisioning master `roles/regluit_prod/templates/prod.py.j2`, `tasks/cron.yml` |
+| No off-box copy of logs exists; pre-6/18 logs only in snapshot `snap-0b9d1d7dec2c6b95f`, destination undecided since 7/2 | [#60](https://github.com/EbookFoundation/regluit-provisioning/issues/60) |
+| TLS renewal fix of 8/18 is box-local (certbot webroot + deploy hook); master's `certs.yml` uses a different mechanism; a rebuild would regress it | [#67](https://github.com/EbookFoundation/regluit-provisioning/issues/67) |
+| No EC2 launch automation exists in provisioning (roles configure an existing box) | repo read |
+| Umbrella issue with definition of done: state inventory, logs, monthly test rebuild, prod Blue/Green, no rewrite | [#74](https://github.com/EbookFoundation/regluit-provisioning/issues/74) |
 | Pending: delete `production-2024-old1` + B/G object `bgd-jdgebq3wemv2dony` (stops ~$555/mo Extended Support); W77 apt `.15→.16`; W128 staging IAM user (deadline 9/18); a credential remediation (private tracker); provisioning#68 stale since 8/28 | `PREFLIGHT_2026-09-14.md`, W128 note |
 
 ---
 
 ## 2. Principles
 
-- **Don't lean on a playbook we can't run.** No real untagged `setup-prod.yml` run on production
-  until it has **run for real, successfully, on a representative test machine** from the same
-  commit, with certs behaviour reconciled (§4e). Dry runs find drift; they never authorize a run.
+- **Don't lean on a playbook we can't run.** No real untagged `setup-prod.yml` run over the current
+  prod box at all; prod gets **replaced** from the playbook (§6d) only after test has been rebuilt
+  from scratch by the same playbook (§6c). Dry runs find drift; they never authorize a run.
   Known-good narrow paths stay in use: `deploy.yml` (code), `setup-prod.yml --tags config`
   (settings; verified 9/14), and `migrate.yml` once proven.
 - **Hand-SSH on production is an exception, not a method.** Each use gets a written exception
@@ -299,7 +331,7 @@ One variable, **`python_version: "3.12"`** (major.minor only), in `group_vars/pr
    `regluit_dev`): parametrize mechanically; PR states they are **untested — hosts are dead**
    (RY 8/30). Deleting them is #56 (D4).
 
-Not in PR-B: certs (§4e), template parity, `group_vars/test` vault — #56 / W128.
+Not in PR-B: certs (#67), template parity, `group_vars/test` vault — #66 / W128, all on the cattle track (§5, §6).
 
 ### 4c. Proof — test first
 1. **Config-path guard** (local): `setup-prod.yml --list-tasks --tags config` before/after →
@@ -311,7 +343,7 @@ Not in PR-B: certs (§4e), template parity, `group_vars/test` vault — #56 / W1
    the commit would **not** undo a rendered file — restore from the pre-run copy saved in PC-3).
 4. Test, packages: `setup-test.yml --tags packages --check`, then real (installs any missing names on
    test only). Record exactly what apt installed.
-5. pip is **not** exercised by tagged runs; it is proven only in the §4e full real run on test.
+5. pip is **not** exercised by tagged runs; it is proven only by the first from-scratch test rebuild (§6c, T1).
 6. Prod: `setup-prod.yml --tags bootstrap,python --check`, then real in Window 2. Expect no change.
 
 ### 4d. What W77 becomes
@@ -322,17 +354,11 @@ needs `apache2` (mod_wsgi loads libpython), `celeryd`, `celerybeat` restarts. Af
 *minor* change (e.g. an OS release with `python3.13`) shows up as the venv assertion failing — that
 change is a var + venv rebuild, a separate project.
 
-### 4e. Road to a real full `setup-prod.yml` run (#56; not scheduled in these windows)
-Gate, all required:
-1. `group_vars/test` has its own vault (W128).
-2. A representative test machine (test.unglue.it, or a disposable box from the same AMI/snapshot
-   with its own DB) completes a **real, untagged** `setup-test.yml` from the same provisioning
-   commit, and the site passes smoke + login + a Celery task.
-3. certs.yml reconciled with how prod's certs are actually managed (certbot per
-   `group_vars/production` comments vs master's acme flow), and the `state: file` "delete" fixed.
-4. `requirements.txt` vs installed venv reconciled (4b.4).
-5. A `--check` against prod whose every changed task has a written reason in the allowlist (per task,
-   with scope; no blanket "pip changed" or "certs changed" entries), reviewed by RY.
+### 4e. From "fix the playbook" to "rebuild from the playbook"
+Rev 4 replaces the old "road to a full `setup-prod.yml` run" with §6: the playbook is proven by
+**building fresh boxes from it** (test monthly, prod Blue/Green-style), not by running it over a
+long-lived box. We never run a full untagged `setup-prod.yml` over the current prod box; it gets
+replaced instead. PR-B is still needed — it's the first thing a from-scratch build hits.
 
 ---
 
@@ -442,7 +468,9 @@ credentials (W128 / #68) → rotate the production credential. IAM create/deacti
 RY's hands. If W128 slips, use the documented test stopgap rather than delaying the rotation.
 
 ### Between windows (no prod mutation)
-PR-A and PR-B written by a sibling, Codex to LGTM, RY merges; §3a and §4c test proofs.
+PR-A and PR-B written by a sibling, Codex to LGTM, RY merges; §3a and §4c test proofs. **L0 and S0
+start now in parallel** (see the cattle track below) — they are read-only on prod and don't wait for
+the windows.
 
 ### Window 2 — after PR-A/PR-B merge and test proofs (RY hands-on)
 
@@ -454,40 +482,243 @@ PR-A and PR-B written by a sibling, Codex to LGTM, RY merges; §3a and §4c test
 | W2.4 | W77 on prod — same procedure, staged `.deb`s first, ≥ 1 h after test is clean | same + CloudWatch/app errors 30 min | staged `.deb`s | same |
 | W2.5 | W77 on Linode boxes — per W77 note | — | — | — |
 
-### Window 3 — after W128 lands: find the full-playbook drift (sibling + RY)
+W77 note under the rebuild model: a rebuilt test box comes up with current packages anyway, so W77
+on test is mainly the **rollback rehearsal**. Prod still needs W77 because a prod rebuild (§6d) is
+weeks away. A scheduled prod rebuild can at most defer W2.4 to a dated fallback window, never cancel
+it (decision D6).
 
-| # | Step | Verify | Stop if |
-|---|---|---|---|
-| W3.1 | `setup-test.yml --check` (untagged, no `--diff`) on test | recap saved; every changed/failed task listed on #56 | output shows a task that should skip (migrate, collectstatic, `raw`) actually ran |
-| W3.2 | Only after W3.1: `setup-prod.yml --check` on prod | same; draft allowlist with per-task reasons | same |
-| W3.3 | Burn down #56 toward §4e's gate | — | — |
+### Cattle track — L0 and S0 start now; the rest follows the near-term windows (content in §6)
 
-Check mode is a **diagnostic** here: `git` doesn't check out, `pip` always predicts changed, commands
-and `django_manage` skip, templates are diffed against files that later tasks won't re-read.
+**What the inventory view changed in the near-term sequence** (rev 4): (1) **L0, an interim log
+archive, moves to the front** — it's read-only on prod and addresses possible ongoing loss; (2) the
+old "Window 3: dry-run the full playbook" is **dropped** — T1 (a real from-scratch test build)
+replaces it; (3) Windows 1, 1b and 2 are otherwise unchanged: the index work, old-DB delete and W77
+don't touch any accumulated state on the web box. (One interaction to keep: W1.7 and W2.4 read the
+app and Celery logs for errors — L0's copy doesn't change those files.)
+
+Order is fixed by dependencies. Each item is its own PR or issue with a Codex round, and RY merges it.
+Owners are listed. Only three steps here touch prod: L0 (read-only copy), C1p (PR-D rollout, its own
+go/no-go) and P1 (the rebuild and switch).
+
+| # | Step | Owner | Depends on | Done when |
+|---|---|---|---|---|
+| L0 | **Interim log archive (this week; not during W1/W1b/W2 observation periods)**: from prod, read-only, archive `/var/log/regluit/` (all files incl. rotated `*.log.N`), `/var/log/celery/`, and `/var/log/apache2/` (all dated files still present; record the date range, since older days are already gone — a known historical gap). Method: on the box, `sha256sum` + size manifest printed to stdout; then `tar` to stdout over SSH → controller file → verify `tar -t` readability and re-hash every member against the manifest (any file whose size/hash changed mid-copy — e.g. a rotation race — is re-copied, or listed as changed); then upload with `aws s3 cp` to a private dated prefix (§6b) and verify the uploaded archive's checksum by download from a reader identity. Nothing written on the box. #60's pre-6/18 log: already copied into prod as `downloads.log.6` (7/2) and **will be deleted by rotation** once it passes `.9`; archive it from the snapshot (method in #60: snapshot → temp volume mounted read-only on another box, never booting old prod) and label it so later analysis doesn't double-count it against the on-box copy | sibling prepares, RY runs the upload | nothing | manifest + archive checksums recorded on #60/#74; **why urgent**: master's cron deletes rotated regluit logs after 30 days, Apache logs after 14, and rotation itself drops the oldest `downloads.log.9` — **verify** on prod what the live crontab and handlers actually do |
+| S0 | **State inventory** (§6a, PR-C) — read-only discovery on prod + test, table committed as `STATE.md` | sibling (discovery), RY (review), Eric (confirms the logs rows) | nothing; runs alongside L0 | every row has a class, an owner, and a **verified preservation or reconstruction method, or an explicit discard decision** |
+| C1 | **Logs deliverable** (§6b, **PR-D**): shipping + retention + README "Where the logs are" for Eric | sibling writes, Codex, Eric reads the README, RY merges | S0, L0, D9–D11 | merged **and** proven on test per §6b acceptance |
+| C1p | **PR-D rolled out to current prod** (narrow tagged run, own go/no-go; includes attaching or updating the instance profile per D9 and the handler/cron changes) | RY hands-on | C1 | a real prod upload retrieved by the reader identity; retention rules verified; independent freshness check green; Eric has accepted the README |
+| C2 | PR-A, PR-B **implemented, reviewed, merged, narrow proofs passed** (§3a, §4c steps 1–4). Integrated acceptance (pip, full role) happens at T1 | sibling, RY | — | as stated |
+| C3 | [#66](https://github.com/EbookFoundation/regluit-provisioning/issues/66)/W128: `group_vars/test` complete + vault | RY + Eric decisions, sibling | credential track | `setup-test.yml --tags config --check` renders on test |
+| C4 | [#67](https://github.com/EbookFoundation/regluit-provisioning/issues/67): certbot managed by provisioning — implemented and reviewed, with the **Blue/Green certificate sequence chosen** (§6c step 4). Its "fresh provision" and "applied to production" acceptance items are demonstrated at T1 and P1 | sibling, RY | S0 | implementation merged; sequence documented |
+| C5 | **Replacement-build safety switches** in the role, plus hand-edits found by S0 folded in or retired: `run_migrations` (default **false** for replacement builds; the `Migrate database` task honours it), `schedulers_enabled` (default **false** on a replacement build: celerybeat, celeryd auto-start, the regluit crons, and the handlers that restart them all honour it), the production-DB assertion from `feature/prod-green`, and outbound-email squelch for test | sibling | S0 | merged; each switch shown off on a throwaway box before T1 |
+| C6 | Box-launch script (AWS CLI, in `scripts/`) + switch/keep/delete runbook for **test**, including the Celery handoff (§6c step 4) | sibling, RY | C2–C5 | reviewed; AWS `--dry-run` where supported |
+| T1 | **First from-scratch rebuild of test** (§6c) — also the integrated acceptance for PR-B (pip, full role), #67's fresh-provision item, and PR-D on a fresh box | RY + sibling | C1–C6 | §6c "done" checklist passes; old test box terminated after 24 h |
+| T+ | Monthly test rebuild (§6c cadence), each at the then-current master SHA (recorded) | sibling with RY's go | T1 | each month: pass, or a filed finding |
+| P1 | **Prod rebuilt Blue/Green-style** (§6d; #56 redefined) | RY hands-on | T1 + one more clean rebuild; **the P1 provisioning SHA must itself have passed a full test rebuild** — if master has moved since the last monthly one, run an extra test rebuild at the P1 SHA | §6d checklist; old prod box terminated after 24 h with logs verified shipped |
 
 ---
 
-## 6. Sustainability — catch rot in a sweep, not mid-deploy
+## 6. Cattle, not pets — rebuilds, state, logs ([provisioning#74](https://github.com/EbookFoundation/regluit-provisioning/issues/74))
 
-**Proposed `Queue/_CADENCE` entry — "Provisioning rot check"** (monthly, first Monday, sibling,
-read-only, ~30 min):
+### 6a. State inventory (step S0, deliverable **PR-C** → `STATE.md` in the provisioning repo)
 
-1. HTTPS-fetch provisioning; `git worktree add --detach` at master's SHA; confirm SHA against
-   `gh api`. Run everything below **from that worktree**.
-2. **Package probe** (catches "the OS dropped a package" — the thing check mode can't, because
-   `raw` skips): a script in provisioning `scripts/` that extracts every apt package name from
-   top-level playbooks **and** roles (including `raw:` bootstrap strings) and runs `apt-cache policy`
-   on test and prod; also prints `/var/lib/apt/lists` age (cache freshness), `python3 --version`,
-   `venv/bin/python --version`, `DJ version`. **Pass** = every name has a candidate and lists are
-   < 7 days old.
-3. `migrate.yml` **inspect** on prod: pending list. **Pass** = empty or matches a release in flight.
-4. After W3.2 exists: `setup-prod.yml --check`; **pass** = `failed=0` and each changed task is in the
-   reasoned allowlist. Report-only until then.
-5. One dated line in `[[Unglue.it Infrastructure]]`; on fail, a provisioning issue + CoS queue item
-   naming the failing names/tasks.
+**Owner**: a sibling session does the read-only discovery; RY reviews; Eric confirms the logs rows.
+**Why first**: you can only treat a box as replaceable once you know what on it is *not* replaceable.
 
-Plus: release PRs containing migrations carry a checklist line with the exact `migrate.yml` JSON
-invocation — enforced by the PR-A `deploy.yml` gate.
+**Discovery method (read-only, prod and test)**, names and metadata only, never file contents under
+`/etc` or `settings/`:
+- files and symlinks changed since the box was built: `sudo find /etc /opt/regluit /home /root
+  /usr/local /var/www /var/lib /var/spool -xdev \( -type f -o -type l \) -newer <a file laid down at
+  build, e.g. the cloud-init marker> -printf '%TY-%Tm-%Td %y %p -> %l\n'` (paths, dates and link targets
+  only; excludes `venv/` and `.git/`). Because `-newer` misses files copied with old timestamps,
+  **also list known state locations regardless of timestamp**: `/var/log/*`, `/var/lib/redis`,
+  `/var/lib/letsencrypt` + `/etc/letsencrypt`, `/var/spool/postfix` (queued mail), `/var/spool/cron`,
+  celery beat schedule file, `/var/log/celery/metrics-*.html`, `/run` units' state dirs, mounts (`findmnt`)
+- effective Django settings for storage and sessions (`DEFAULT_FILE_STORAGE`/`STORAGES`,
+  `SESSION_ENGINE`, `CACHES`, `CELERY_*` URLs) printed by name → backend class/host only, no secrets —
+  to confirm media is really S3 and sessions aren't in files or local Redis
+- installed packages vs the playbook's lists (`apt-mark showmanual`); enabled systemd units and timers
+  (`systemctl list-unit-files --state=enabled`, `list-timers`); `crontab -l` for root/ubuntu/celery and
+  `/etc/cron.d/`; `ufw status`; users and `~/.ssh/authorized_keys` *line counts*; swap; mounts
+- log directories: sizes, oldest/newest file dates, and what writes/rotates/deletes them
+- the rendered-vs-template comparison already available: `setup-prod.yml --tags config --check`
+  (known clean 9/14 for the config-tagged files)
+
+**Initial table — known today (to be completed by S0; ✅ = off-box already, ❌ = only on the box)**
+
+| Item | Class | Where it lives now | Off-box? | Owner / issue | Notes |
+|---|---|---|---|---|---|
+| Database (all app data) | accumulated state | RDS `production-2024` / `test-2026-08-23` | ✅ | — | Rebuilds point at the existing RDS; PITR is the backup |
+| Uploaded media / ebook files | accumulated state | S3 | ✅ | — | per #74 |
+| Secrets / settings values | build input | ansible-vault in this repo | ✅ | W128/#66 for test | test's `prod.py` is hand-managed today (#66) ❌ |
+| App code, venv, static files | build product | GitHub + pip + `collectstatic` | ✅ (rebuildable) | PR-B | venv rebuild follows `requirements.txt` pins |
+| **`/var/log/regluit/downloads.log*`** | **accumulated state — business record** | prod box | ❌ | #60, PR-D | download history; rotates at 20 MB with 9 backups per master's `prod.py.j2` (**verify** live), and master's cron deletes `*.log.*` older than 30 days |
+| `/var/log/regluit/unglue.it.log*` | accumulated state (diagnostic) | prod box | ❌ | PR-D | 5 MB × 5 per template |
+| `/var/log/regluit/doab-harvest.log` | accumulated state (diagnostic) | prod box | ❌ | PR-D | cron appends; not rotated (active file's mtime keeps it from the 30-day delete) → grows |
+| Pre-6/18 logs from old prod | accumulated state | EBS snapshot `snap-0b9d1d7dec2c6b95f`; also copied onto prod 7/2 as `downloads.log.6` | ✅ (snapshot) | #60 | the on-box copy renumbers on each rotation and is deleted past `.9` → L0 archives it; don't double-count the two copies |
+| Apache access/error logs | accumulated state (traffic evidence) | `/var/log/apache2/YYYYMMDD_*.log` via cronolog | ❌ | PR-D | gzip after 2 days, deleted after 14 days (cron); up to ~1 GB/day raw under bot load |
+| Celery worker/beat logs | diagnostic | `/var/log/celery/` | ❌ | PR-D | worker log truncated weekly to 5,000 lines |
+| systemd journal | diagnostic | box | ❌ | — | capped 500 MB; not shipped (proposed) |
+| TLS certificate lineage + renewal config + deploy hook | **hand-edit since June** | `/etc/letsencrypt/` on prod | ❌ | #67 | the 8/18 renewal fix is box-local; rebuild would regress it |
+| Box built from unmerged `feature/prod-green` | drift | whole role | — | #56, PR-B | template parity items |
+| Redis db 0 — Celery broker (queued, reserved, scheduled/ETA tasks) | transient state, **per box** (`redis://127.0.0.1:6379/0`) | box | ❌ | §6c/§6d handoff | new workers can't see the old queue; handoff drains with workers running |
+| Redis db 1 — Celery result backend | transient state, per box (`…/1`) | box | ❌ | S0 decision | `CeleryTask` rows in MySQL look results up here; results for tasks run on the old box become unavailable after a switch — S0 finds what reads them and records keep/discard |
+| Postfix mail queue | transient state | `/var/spool/postfix` | ❌ | §6c/§6d handoff | flush (`postqueue -f`, confirm empty) before stopping the old box |
+| Celery beat schedule file (last-run times) | transient state | box | ❌ | §6d | a new box may run or skip one periodic run; accept, but check which jobs send email |
+| `~ubuntu/dump.sh` output (`unglue.it.sql.gz`) | ad-hoc artifact | prod home dir | ❌ | S0 | find out if anything relies on it; RDS snapshots are the real backup |
+| SSH host keys, EIP, security groups, DNS | infrastructure identity | AWS / box | partial | C6 | host key changes on rebuild → `known_hosts` update step |
+| Anything else hand-edited since 6/18 | unknown | — | — | S0 | the point of the discovery pass |
+
+### 6b. Logs (step C1, deliverable **PR-D**) — Eric's requirement
+
+**Eric's only requirement**: the right logs are saved, somewhere he understands, and the playbook
+documents it. So the deliverable is judged by whether Eric can answer "which logs, how long, where"
+from the README alone.
+
+**Proposal (for Eric and RY to confirm, D9/D10):**
+
+| Log | Why keep it | On-box retention | Off-box destination | Off-box retention |
+|---|---|---|---|---|
+| `downloads.log*` | business record (download counts) | as today | S3 `s3://<logs bucket>/unglue.it/<env>/regluit/downloads/YYYY/MM/` | **indefinitely** (small: ~20 MB per ~5 weeks) |
+| `unglue.it.log*` | app errors | as today | `…/regluit/app/YYYY/MM/` | 1 year |
+| `doab-harvest.log` | harvest history | add rotation (weekly) | `…/regluit/doab/YYYY/MM/` | 1 year |
+| Apache access + error | traffic, bot and abuse evidence | 14 days (as today) | `…/apache/YYYY/MM/DD/` (gzipped) | 90 days |
+| Celery worker + beat | task failures | as today | `…/celery/YYYY/MM/` | 90 days |
+| journald | OS debugging | 500 MB cap | not shipped | — |
+
+**Mechanics (same tooling — no new platform)**: an Ansible-installed shipper script + cron, S3 via
+the AWS CLI, S3 lifecycle rules. Exact design is PR-D's; the plan fixes what PR-D must **prove**.
+
+**PR-D acceptance requirements** (Codex rev-4 r1; all must be demonstrated on test before C1p):
+1. **Every loss mechanism is covered**, not just the delete crons: Python `RotatingFileHandler`
+   renumbering and dropping `.9`; the weekly Celery `tail -5000` truncation (which keeps no archive
+   and can leave a writer on the unlinked file); Apache's cronolog + gzip + 14-day delete;
+   `doab-harvest.log` growth. Each is either replaced by a mechanism that only discards what has been
+   shipped, or explicitly accepted in the README.
+2. **Coordinated writers**: several mod_wsgi processes write the same Django log files and
+   `GroupWriteRotatingFileHandler` only changes permissions — so rotation must not be left to
+   uncoordinated handlers. PR-D picks one of: `WatchedFileHandler` + `logrotate` (`copytruncate` is
+   *not* acceptable for the downloads log) with a post-rotate reopen, or another design shown to
+   produce immutable closed segments under concurrent writers.
+3. **Bounded exposure**: a maximum unshipped age per log (proposal: 24 h for `downloads`, including a
+   quiet log — rotate or snapshot-ship daily even if under size), and a written statement of what an
+   unexpected instance loss can lose.
+4. **Unique object keys** across rotations and instances (host id + segment start/end or content hash);
+   no upload may overwrite an existing key (`--if-none-match`-style conditional put, or keys that
+   can't collide, verified in a test).
+5. **Content receipts**: the shipper records size + SHA-256 per segment; a **reader identity** (not the
+   uploader) verifies them. Deletion on the box only after a verified receipt.
+6. **Failure paths exercised on test**: shipping failure (no credentials / no network) → files
+   accumulate, nothing deleted, alert raised; retry succeeds; retrieval of a given day's download log
+   by following the README.
+7. **Independent freshness check** that doesn't run on the box it's watching (a cron that never
+   starts can't report itself): a daily check from outside — e.g. the controller-side cadence sweep, or
+   an S3/CloudWatch alarm — alerts if the newest `downloads` object is older than 36 h or box disk use
+   passes a threshold. Choice in PR-D.
+8. **Final flush with manifest** in every switch runbook (§6c, §6d): stop the services that write, run
+   the shipper on all remaining files including live ones, and verify a full manifest (sizes +
+   checksums) with the reader identity **while the instance is still running** — a stopped instance
+   can't upload.
+
+**Credentials (D9)**: default an **EC2 instance role**, which requires S0 first: an instance has at most
+one role, so check whether prod/test already have one and what uses it, and extend it (or replace it
+with a superset) rather than bolting on a second. Verify the **effective identity of the shipper under
+its real cron user and environment** (`aws sts get-caller-identity` in that context) — a shared
+credentials file or environment variables would silently take precedence over the instance role.
+Uploader: `s3:PutObject` on its own env prefix only (`unglue.it/prod/…` vs `unglue.it/test/…`), plus
+multipart and KMS permissions if the bucket requires them. `PutObject` can overwrite, so it isn't
+append-only protection — requirement 4 carries that. Reader: a separate identity (RY/Eric, and the
+freshness check) with list/get only. (Controller-side commands keep using the `gluejar_member`
+profile; that's a different identity from the instance role.)
+
+**Bucket and retention (D11)**: before changing anything, **read and save the bucket's existing
+lifecycle configuration** (a lifecycle PUT replaces the whole set) and merge. Rules are per prefix, with
+`downloads/`, the L0 archive prefix, and the existing 2024 DB export **explicitly outside any expiration
+rule**. If versioning is on, define noncurrent-version expiry for the expiring prefixes only.
+Retention counts from **upload time** (S3's clock), which the README says in words. Public access
+blocked; Eric's read access verified by Eric opening a file.
+- README section **"Where the logs are"**, written for Eric: a table like the one above, how to find
+  a given day's download log in the S3 console, how long each is kept, what happens at a rebuild,
+  and who to ask. No Ansible knowledge needed to read it.
+
+### 6c. Monthly from-scratch rebuild of test — the standing proof (replaces the rot check)
+
+A failing rebuild is a **finding, not an outage**: the old test box keeps serving until the new one
+passes.
+
+**Proposed `Queue/_CADENCE` entry — "Rebuild test.unglue.it from the playbook"** (monthly, sibling
+with RY's go for the AWS steps, ~half a day of wall time, mostly waiting):
+1. From a verified detached worktree of provisioning master: record the **provisioning SHA** and the
+   **app SHA** (the app branch tip resolved once; the build checks out that SHA, not the moving
+   branch). Launch a fresh Ubuntu 24.04 instance with the C6 launch script (same instance type,
+   security group, instance role; tags `role=test`, `build=<date>`).
+2. Before provisioning, prove the new code needs no schema change: (a) controller-side, the PR-A
+   comparison between the old box's app SHA and the recorded app SHA lists **no new migration files**,
+   and (b) `migrate.yml` **inspect** on the old box shows nothing pending. Either fails → stop;
+   migrations go through their own release procedure first (deploy + `migrate.yml` on the serving
+   box), never inside a rebuild. After provisioning, `migrate.yml` inspect on the new box must also be
+   empty before any smoke.
+3. Run `setup-test.yml` **untagged, for real**, against the new box (temporary inventory entry), with
+   `run_migrations=false` and `schedulers_enabled=false` (C5). Because both boxes share the test RDS,
+   the build must not change the database: no migrate, no beat, no crons, no outbound mail (squelch
+   verified — test's DB is a prod copy with real addresses). `set_site_domain` can create or update
+   the Site row (domain *or* display name), so on replacement builds C5 **skips it and asserts the
+   existing Site values read-only** instead. Identity assertion: DB host is test's, never prod's.
+4. Smoke the new box without the public IP: HTTP by host header for `/`, `/free/`, a work page, login;
+   `migrate.yml` inspect = nothing pending; a log-shipping test upload to the test prefix. A **Celery round-trip** is deferred to step 5f because the new box's
+   workers are deliberately disabled until then. **Certificate issuance** is a separate constraint:
+   HTTP-01 validation reaches whichever box holds the IP, so the sequence chosen in C4 decides: either (a) securely transfer the
+   current valid certbot lineage to the new box before TLS smoke (then smoke HTTPS with correct SNI via
+   `curl --resolve test.unglue.it:443:<new ip>` with verification on), or (b) a bounded post-switch
+   bootstrap with a stated maximum TLS gap and a rollback if issuance fails.
+5. **Switch — the handoff** (same procedure in both directions, including rollback):
+   a. maintenance page on the old box (blocks new producers);
+   b. stop beat and the regluit crons on the old box; wait for running cron jobs and requests to finish;
+   c. **keep old workers running** until the broker queue (db 0), reserved and ETA/scheduled tasks are
+      empty (`celery inspect active/reserved/scheduled` + Redis `LLEN`); anything that won't drain →
+      postpone, or a task-by-task keep/discard decision by RY; then stop workers;
+   d. flush the old box's mail queue (`postqueue -f`, confirm empty);
+   e. move the Elastic IP; certificates per C4's sequence;
+   f. enable schedulers on the new box (`schedulers_enabled=true`, tagged run) only now that the old
+      side is confirmed quiet; Celery round-trip; maintenance off on the new box; HTTPS smoke.
+6. **Keep the old box 24 h with services stopped but the instance running**; then §6b final flush with
+   manifest verified by the reader identity; then stop, snapshot the root volume, terminate; record ids.
+   Rollback within the 24 h = step 5 in reverse (quiesce the new box first).
+7. Record: dated line in `[[Unglue.it Infrastructure]]` and #74; any failure → provisioning issue
+   with the failing task, and the old box keeps serving.
+**Done** = a box built only from master + vault serves test.unglue.it, and no hand step was needed. Any
+hand step is a finding to fold into the playbook before next month.
+
+### 6d. Prod rebuilt Blue/Green-style — [#56](https://github.com/EbookFoundation/regluit-provisioning/issues/56) redefined
+
+#56 becomes: **build a new prod box from the playbook → smoke → switch → keep the old box 24 h →
+delete** — the same shape as the MySQL Blue/Green on 9/12. Gate: T1 plus one more clean test
+rebuild, **and the P1 provisioning SHA must itself have passed a full test rebuild** (extra rebuild at
+that SHA if master moved); S0 rows for prod all closed; log shipping live on current prod (**C1p**);
+#67 certbot procedure rehearsed on test.
+
+Outline (full runbook written at the time, Codex-reviewed, RY hands-on):
+1. Same as §6c steps 1–3 against `production-2024`: pinned provisioning + app SHAs, empty migration
+   plan required, `run_migrations=false`, `schedulers_enabled=false`, outbound email off, identity
+   assertion. **No schema change is allowed between building the new box and the end of the 24 h
+   rollback period**, so old and new code stay compatible with the one shared database.
+2. Smoke as §6c step 4, with the certificate sequence proven on test; RY and Eric spot-check.
+3. Switch using §6c step 5's handoff in a short maintenance window. **Prod-only addition**: before
+   step 5f enables any email-producing work on the new box, restore the intended production mail
+   configuration and verify one real send to an admin address; the same check applies to the old box
+   on rollback. (Test stays squelched.)
+4. Old box: 24 h with services stopped and the instance running; final flush with verified manifest;
+   stop; snapshot the root volume (cheap insurance, like #60); terminate.
+5. Rollback within the 24 h: §6c step 5 in reverse (quiesce new box, drain, move EIP back, re-enable
+   old schedulers). W77 on prod closes either when W2.4 has patched and verified the current box, or
+   when a replacement box serves prod with verified package versions (D6).
+
+### 6e. Guardrail — no platform rewrite
+Same tools as today: **Ansible, Ubuntu LTS, the AWS CLI, cron, S3**. Not in scope: Terraform or other
+IaC frameworks, containers/Kubernetes, image bakers, autoscaling groups, a CloudWatch agent stack, or
+a new CI system. If a step seems to need one of those, it comes back to RY as a decision, not a PR.
+
+Plus (unchanged): release PRs containing migrations carry a checklist line with the exact `migrate.yml`
+JSON invocation — enforced by the PR-A `deploy.yml` gate.
 
 ---
 
@@ -517,13 +748,30 @@ invocation — enforced by the PR-A `deploy.yml` gate.
 | PR-A migrate.yml | "no-op" run writes data via `post_migrate` | — | Empty plan → `migrate` never invoked |
 | PR-A | Output-format parsing breaks on a Django upgrade | strict parser fails loudly | Pin parser to installed version (PC-3); proven on test |
 | PR-B | Change alters `--tags config` behaviour (credential path) | task-list diff + body/template/handler review | Required in PR; revert |
-| PR-B | Tagged proofs miss apt/pip regressions | — | Separate `--tags packages` proof on test; pip only via §4e full test run |
+| PR-B | Tagged proofs miss apt/pip regressions | — | Separate `--tags packages` proof on test; pip proven by T1 (§6c) |
 | PR-B | Venv assertion blocks a fresh build | fresh-build failure | Assertion placed after venv creation |
 | W2.2 | `.pth` render changes content | `changed=1` | Stop; restore saved copies; compare |
 | W2.3/2.4 | `.15` not downloadable at rollback time; partial apt transaction; package triggers restart services unexpectedly | staging step; `dpkg --audit`; service status | Stage `.deb`s before upgrading; rehearse rollback on test; `dpkg --configure -a` path; watch services |
-| W3 | Check mode trusted as proof | — | Diagnostic only; §4e gate requires a real full test run |
-| certs.yml | Decrypted key material left on controller (`state: file` no-op) | file still present after run | Fix in #56 before any full run (§4e.3) |
-| Monthly check | Runs stale code | worktree SHA ≠ `gh api` SHA | Detached verified worktree |
+| L0 | Logs keep being deleted by the 30-day cron before they're archived | S0 finds rotated files older than 30 days missing | L0 runs this week, before other cattle steps; PR-D changes deletes to "only after shipped" |
+| L0 | Log copies contain personal data (IPs, emails in tracebacks) and end up somewhere public or in an AI transcript | bucket policy check; transcript review | Private bucket with public access blocked; copy by pipe, never `cat`/grep log contents in a CC session |
+| S0 | Discovery misses a hand-edit (it's only as good as the `-newer` marker and path list) | a rebuilt test box behaves differently | T1's "no hand step needed" criterion is the backstop; every miss becomes an S0 row |
+| C1 | Shipping silently stops; delete cron then can't free disk | independent off-box freshness check (§6b req. 7); disk threshold | Deletes only after verified receipt → disk fills, not data loss |
+| C1 | Handler rotation or Celery truncation still drops log data the delete crons no longer do | PR-D failure-path tests (§6b req. 1–2, 6) | Replace or explicitly accept each loss mechanism |
+| C1 | Upload overwrites an earlier segment with the same key | receipt mismatch | Unique keys + no-overwrite check (§6b req. 4) |
+| C1/D9 | Second instance role can't be attached; or shared-file/env credentials override the role | `sts get-caller-identity` under the cron user | Extend the existing role after S0; verify effective identity |
+| D11 | Lifecycle PUT wipes existing rules or a broad rule expires downloads/L0/DB export | saved pre-change config; rule review | Read-merge-write; explicit exclusions |
+| C1p | Logs keep dropping on current prod until P1 | — | C1p rolls PR-D out to current prod long before P1 |
+| T1/T+ / P1 | Building the new box changes the shared DB (full role runs `migrate`) | build log shows migrate ran | `run_migrations=false`; empty-plan preconditions; no schema changes during the rollback period |
+| T1/T+ / P1 | Queued Celery work is stranded in the old box's local Redis | `inspect`/`LLEN` before stopping workers | Drain with workers running; postpone or task-by-task decision |
+| T1/T+ / P1 | Task results for `CeleryTask` rows become unavailable (result backend is per-box Redis db 1) | S0 identifies readers | Recorded keep/discard decision per S0 |
+| T1/T+ / P1 | Mail stuck in the old box's postfix queue | `postqueue -p` | Flush before stopping |
+| certs.yml | Decrypted key material left on controller (`state: file` no-op) | file still present after run | Fixed by #67 (C4) before T1 |
+| T1/T+ | Rebuilt test box points at prod DB, or sends real email | pre-run identity assertion; outbound mail check | C5 folds in the prod-DB assertion; email squelch verified in smoke before the switch |
+| T1/T+ / P1 | Two boxes run Celery beat/crons against one DB during the switch → duplicate jobs or emails | beat logs on both boxes; duplicate DOAB runs | Stop old box's schedulers **before** starting new box's |
+| T1/T+ / P1 | New box can't get a TLS certificate before the IP moves (HTTP-01 reaches the old box) | `curl --resolve` HTTPS smoke with verification | C4 chooses lineage transfer or bounded post-switch bootstrap; rehearsed on test first |
+| T1/T+ / P1 | Old box terminated before its last logs shipped, or stopped so it can't upload | manifest verification by reader identity | Flush while running; manifest verified before stop/terminate |
+| P1 | Rollback after switch while schema changed | — | No schema change from build to end of rollback period; rollback = §6c handoff in reverse |
+| Cattle track | Scope creeps into a platform rewrite | PR proposes new tooling | §6e guardrail: that's an RY decision, not a PR |
 | All | This plan's unverified facts are wrong | PC-1…PC-5 | Stop and revise the step before running it |
 
 ---
@@ -538,11 +786,22 @@ invocation — enforced by the PR-A `deploy.yml` gate.
   reconciliation before any full run.
 - **D4 — dead-host playbooks: parametrize or delete?** *Default: parametrize now; delete under #56.*
 - **D5 — `deploy.yml` gate: fail-before-checkout or warn-only?** *Default: fail, with override.*
-- **D6 — W77 timing.** *Default: Window 2, after the rollback `.deb`s are staged and rehearsed on test.*
-- **D7 — where the plan PR lives.** *Default: provisioning repo* — PR-A/PR-B, #56 and the monthly
-  check land there. Both repos are public; this file omits credential specifics.
-- **D8 — representative test machine for §4e.** *Default: test.unglue.it after W128*; alternative is a
-  disposable box (its teardown must be documented and verified).
+- **D6 — W77 timing.** *Default: Window 2, after the rollback `.deb`s are staged and rehearsed on
+  test.* A booked prod rebuild doesn't cancel W77: it can at most defer it to a **dated fallback
+  window** (default: two weeks after the deferral). W77 closes when the current box is patched and
+  verified, or when a replacement box actually serves prod with verified package versions.
+- **D7 — where the plan PR lives.** *Default: provisioning repo* — PR-A/B/C/D, #56 and #74 land there.
+  Both repos are public; this file omits credential specifics.
+- **D8 — who owns the monthly test rebuild.** *Default: a regluit sibling with RY's go for the AWS
+  launch/EIP/terminate steps*, filed in `Queue/_CADENCE` by the CoS after T1 succeeds.
+- **D9 — credentials for log shipping.** *Default: an EC2 instance role (extending any role the box
+  already has, after S0), put-only to its environment's log prefix, with a separate reader identity*;
+  alternative is a dedicated IAM user key in the vault (adds to the credential track).
+- **D10 — log retention.** *Default: the §6b table* (downloads forever; app/doab 1 year; Apache and
+  Celery 90 days). **Eric confirms.**
+- **D11 — log bucket.** *Default: the existing `unglueit-logs` bucket* (#60 notes it holds only a
+  2024 DB export) with public access blocked and per-prefix lifecycle rules; alternative is a new
+  bucket.
 
 ---
 
@@ -605,5 +864,50 @@ re-reviewed)**:
 - W1.2 checked only `FreeStorageSpace` although PC-4 may identify local temp storage; 3× was
   presented as MySQL-grounded → gate both storages; headroom restated as an operational margin
   that explicitly adds `innodb_online_alter_log_max_size`, corroborated by test measurements.
+
+### Rev 4 (cattle-not-pets revision) — requested by RY via the CoS, 2026-09-14 11:53
+Added: North star (RY's words, Eric's requirement); §6 (state inventory PR-C, logs PR-D, monthly
+from-scratch test rebuild replacing the dry-run rot check, #56 redefined as prod Blue/Green rebuild,
+no-rewrite guardrail); cattle track with owners; L0 interim log archive moved to the front; old
+"Window 3" dry-run dropped. §3, Windows 1/1b/2 and the credential track unchanged.
+
+### Rev 4, round 1 — 2026-09-14 12:00–12:04 PT — **VERDICT: CHANGES REQUESTED**
+Codex confirmed by diff against committed rev 3 that §3, the Window 1/1b/2 tables and the credential
+track are unchanged, and that "the new rebuild/logging blockers do not invalidate that near-term
+approval." 3 blockers, 8 should-fix. What rev 4.1 did:
+- **B1** a replacement build runs the role's unconditional `migrate` against the shared DB →
+  `run_migrations=false` switch (C5), empty-migration-plan preconditions before and after, pinned app
+  + provisioning SHAs, no schema change from build through the rollback period.
+- **B2** "stop Celery, then drain Redis" is impossible — each box has its own local Redis (verified:
+  `CELERY_BROKER_URL = redis://127.0.0.1:6379/0`) → explicit handoff: maintenance on, stop beat/crons,
+  **drain with workers running**, flush mail, move IP, enable new schedulers last; same in reverse for
+  rollback; `schedulers_enabled=false` on replacement builds incl. handlers.
+- **B3** shipping design couldn't support the preservation promise (handler rotation drops `.9`,
+  multi-process writers, Celery `tail` truncation, quiet logs never "closed", counts ≠ contents) →
+  eight PR-D acceptance requirements (§6b).
+- Should-fix adopted: C1p rollout to current prod + off-box freshness check; dependency cycle broken
+  (implementation+narrow proofs vs integrated acceptance at T1; P1 SHA must pass a test rebuild);
+  S0 broadened (`/root`, `/var/lib`, `/var/spool`, symlinks, known locations regardless of timestamp,
+  effective storage/session settings) and new rows for the Redis **result backend** (db 1, verified)
+  and postfix queue; certificate sequence must be chosen in C4, HTTPS smoke via `--resolve` with SNI,
+  old box stays *running* for final flush; L0 includes Apache logs, manifest + checksums, rotation-race
+  handling; **#60's recovered log is also on prod as `downloads.log.6`** (verified in #60's 7/2
+  comment) and will rotate out; D9 effective-identity and one-role-per-instance; D11 lifecycle
+  read-merge-write, exclusions, upload-time retention, overwrite risk; D6 dated fallback instead of
+  dropping W77.
+
+### Rev 4, round 2 — 2026-09-14 12:08–12:10 PT — **VERDICT: LGTM**
+"I would sign rev 4.1 at plan level. No blockers remain." All 3 rev-4 blockers RESOLVED; 8 of 11
+round-1 items RESOLVED, 3 PARTIAL (wording). §3 and Windows 1/1b/2 re-confirmed unchanged from rev 3.
+Non-blocking corrections **applied after the LGTM (rev 4.2, not re-reviewed)**:
+- C1p now named as a prod-touching step and as P1's shipping prerequisite; P1's "same commit"
+  wording reconciled with the "extra rebuild at the P1 SHA" rule.
+- W2.4 can be deferred to a dated fallback but not dropped; W77 may close after patching the current
+  box, not only after replacement.
+- Prod switch restores and verifies production mail before enabling email-producing work (and on
+  rollback).
+- `set_site_domain` can write (creates/updates domain or name) → skipped on replacement builds, with a
+  read-only assertion instead (C5).
+- Celery round-trip deferral (workers disabled) separated from the HTTP-01 certificate constraint.
 
 <!-- cc:2026.09.14 -->
