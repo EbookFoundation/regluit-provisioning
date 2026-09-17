@@ -226,5 +226,27 @@ FOUND=$(grep -c "Found 10.0.0" /var/log/fail2ban.log 2>/dev/null); FOUND=${FOUND
 assert "per-request 'Found' lines suppressed at NOTICE (got $FOUND)" "[ \"$FOUND\" -eq 0 ]"
 assert "Ban lines are still logged"            "grep -q 'Ban 10.0.0.2' /var/log/fail2ban.log"
 
+# =====================================================================
+echo "=== F. a missing log file, which is why the systemd drop-in exists ==="
+# The premise of the ExecStartPre in the fail2ban drop-in: fail2ban does not
+# lose one jail when a logpath is missing, it refuses the whole configuration
+# and the server never comes up. Verified here rather than taken on trust.
+assert "the paths the drop-in calls exist" "[ -x /usr/bin/mkdir ] && [ -x /usr/bin/touch ]"
+fail2ban-client stop >/dev/null 2>&1; sleep 3
+rm -f /var/run/fail2ban/fail2ban.sock "$LOG"
+fail2ban-server -xf >/var/log/f2b-nolog.out 2>&1 &
+sleep 8
+assert "with the log file GONE, fail2ban does not come up at all" \
+       "! fail2ban-client ping 2>/dev/null | grep -q pong"
+assert "and it says why" "grep -q 'Have not found any log file' /var/log/f2b-nolog.out /var/log/fail2ban.log"
+# Now do exactly what ExecStartPre does, and nothing else.
+/usr/bin/mkdir -p /var/log/apache2 && /usr/bin/touch "$LOG"
+fail2ban-server -xf >/var/log/f2b-relog.out 2>&1 &
+sleep 8
+assert "touching the file first is enough to bring the whole server back" \
+       "fail2ban-client ping 2>/dev/null | grep -q pong"
+assert "and all three jails start from an empty log" \
+       "fail2ban-client status | grep -q regluit-flood && fail2ban-client status | grep -q regluit-badbot"
+
 echo; echo "RESULTS: $pass passed, $fail failed"
 [ $fail -eq 0 ]
