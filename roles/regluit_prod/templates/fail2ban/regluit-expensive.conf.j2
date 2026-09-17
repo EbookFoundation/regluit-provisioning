@@ -8,7 +8,12 @@
 # /accounts/register only, not all of /accounts/: /accounts/login/ is how real
 # readers sign in. See regluit-flood.conf for the line shape.
 #
+# %r is the RAW request line, which apache does not normalise, so `/+` is there
+# to catch //socialauth/. A percent-encoded path (/%73ocialauth/) still evades
+# this. Treat the jail as catching the request shapes scrapers actually send,
+# not as comprehensive protection for those endpoints.
+#
 # Managed by Ansible (regluit_prod). EbookFoundation/security-private#32.
 [Definition]
-failregex = ^<HOST> \[[^\]]*\] "(?:GET|POST|HEAD|PUT|PATCH|DELETE|OPTIONS) /(?:feedback|search|socialauth|accounts/register)(?=[/?\s])
+failregex = ^<HOST> \[[^\]]*\] "(?:GET|POST|HEAD|PUT|PATCH|DELETE|OPTIONS) /+(?:feedback|search|socialauth|accounts/register)(?=[/?\s])
 ignoreregex =

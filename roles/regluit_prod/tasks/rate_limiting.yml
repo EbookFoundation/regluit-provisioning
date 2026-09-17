@@ -1,15 +1,14 @@
 ---
 # Crawler rate limiting (EbookFoundation/security-private#32).
 #
-# 2026-09-17: two outages, about 76 minutes. One undeclared scraper sustained
-# ~27 requests/second — 69% of the day's 2.19M requests — and GPTBot added
-# ~128K to paths robots.txt explicitly forbids it. The wedge mechanism is worker
-# exhaustion: /socialauth/login/google-oauth2/ makes an OUTBOUND call to Google
-# per request, so each one holds an Apache worker while blocked off-box.
+# 2026-09-17: two outages, about 76 minutes, caused by worker exhaustion —
+# /socialauth/login/google-oauth2/ makes an OUTBOUND call to Google per request,
+# so each one holds an Apache worker while blocked off-box.
 #
 # fail2ban bans at the firewall, where blocked traffic costs no worker at all.
-# That is the whole argument for it over an Apache module: a 403 from Apache
-# still costs a worker, and workers are the thing that runs out.
+# That is the argument for it over an Apache module: a 403 from Apache still
+# costs a worker, and workers are the thing that runs out. The measurements
+# behind the thresholds are in the jail template and in the PR.
 #
 # PROD ONLY — imported under `when: deploy_type == 'prod'` in tasks/main.yml.
 
@@ -39,7 +38,7 @@
 
 # Filters before jails: a jail whose filter is not on disk fails to start, and
 # fail2ban carries on with the OTHER jails — running, and watching less than you
-# think. Ordering makes that impossible rather than unlikely.
+# think.
 - name: Install regluit fail2ban filters
   become: yes
   ansible.builtin.template:
@@ -56,8 +55,7 @@
 
 # jail.d files load in alphabetical order and later files win, which is what
 # makes the [sshd] override inside this one effective against Debian's
-# defaults-debian.conf. The test asserts the sshd jail is not running, so the
-# ordering is verified rather than assumed.
+# defaults-debian.conf. The test asserts the sshd jail is not running.
 - name: Install regluit fail2ban jails
   become: yes
   ansible.builtin.template:
@@ -78,7 +76,9 @@
 
 # ratelimit_access is scratch: the record of what happened is the dated archive
 # log, which the existing cleanup crons manage. Hourly rather than daily so the
-# file stays around 25 MB instead of growing to a few hundred. Truncating it
+# file holds a few MB on a normal day and about 12 MB in a heavy hour, instead
+# of the ~280 MB a day like 2026-09-17 would accumulate. (Measured: this narrow
+# format is 128 bytes a line against the archive's 296.) Truncating it
 # under a running apache is safe because apache opens its logs O_APPEND, so the
 # next write goes to the new end of file rather than leaving a sparse hole; and
 # fail2ban notices a file that shrank and re-reads it from the start.

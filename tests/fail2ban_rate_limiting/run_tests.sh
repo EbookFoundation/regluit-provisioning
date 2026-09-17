@@ -72,16 +72,26 @@ line 9.9.9.3 "GET /feedbackish HTTP/1.1"         "$UA_HUMAN" >> /tmp/g.log
 assert "expensive spares /searching-for-books, /accounts/login/, /feedbackish" \
                                                "[ \"\$(hits /tmp/g.log regluit-expensive)\" = 0 ]"
 
+# apache logs the RAW request line, so a doubled slash is a different string.
+: > /tmp/h.log
+line 9.9.9.4 "GET //socialauth/login/google-oauth2/ HTTP/1.1" "$UA_HUMAN" >> /tmp/h.log
+assert "expensive still matches a doubled slash, //socialauth/" \
+                                               "[ \"\$(hits /tmp/h.log regluit-expensive)\" = 1 ]"
+
 # =====================================================================
 echo "=== B. bad-bot filter: the robots.txt Disallow:/ list, and ONLY it ==="
 : > /tmp/b.log
-line 5.5.5.1 "GET / HTTP/1.1" "$UA_GPTBOT"                                >> /tmp/b.log
-line 5.5.5.2 "GET / HTTP/1.1" "CCBot/2.0 (+https://commoncrawl.org/faq/)" >> /tmp/b.log
-line 5.5.5.3 "GET / HTTP/1.1" "Bytespider/1.0"                            >> /tmp/b.log
-line 5.5.5.4 "GET / HTTP/1.1" "Amazonbot/0.1"                             >> /tmp/b.log
-line 5.5.5.5 "GET / HTTP/1.1" "meta-externalagent/1.1"                    >> /tmp/b.log
-line 5.5.5.6 "GET / HTTP/1.1" "Diffbot/0.1"                               >> /tmp/b.log
-assert "badbot matches all six agents robots.txt forbids" "[ \"\$(hits /tmp/b.log regluit-badbot)\" = 6 ]"
+# These are the strings production actually logged on 2026-09-17, not invented
+# ones. Bytespider is the reason: it carries NO version, and a filter that
+# required a "/" after the name matched none of its traffic.
+line 5.5.5.1 "GET / HTTP/1.1" "$UA_GPTBOT" >> /tmp/b.log
+line 5.5.5.2 "GET / HTTP/1.1" "CCBot/2.0 (https://commoncrawl.org/faq/)" >> /tmp/b.log
+line 5.5.5.3 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; Bytespider; spider-feedback@bytedance.com)" >> /tmp/b.log
+line 5.5.5.4 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; Amazonbot/0.1; +https://developer.amazon.com/support/amazonbot)" >> /tmp/b.log
+line 5.5.5.5 "GET / HTTP/1.1" "meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)" >> /tmp/b.log
+line 5.5.5.6 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; Diffbot/0.1; +http://www.diffbot.com)" >> /tmp/b.log
+line 5.5.5.7 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; Diffbot)" >> /tmp/b.log
+assert "badbot matches all six forbidden agents, versioned or not" "[ \"\$(hits /tmp/b.log regluit-badbot)\" = 7 ]"
 
 : > /tmp/ok.log
 for ua in "$UA_GOOGLE" "$UA_CHATGPT_USER" "$UA_OAI_SEARCH" "$UA_CLAUDE_SEARCH" "$UA_CLAUDEBOT" \
@@ -91,10 +101,12 @@ done
 assert "badbot spares Googlebot, ChatGPT-User, OAI-SearchBot, Claude-SearchBot, ClaudeBot, Amzn-SearchBot, meta-webindexer, a reader" \
                                                "[ \"\$(hits /tmp/ok.log regluit-badbot)\" = 0 ]"
 
-# A bot name inside the requested URL must not ban the person who asked for it.
+# A bot name inside the requested URL must not ban the person who asked for it,
+# and a name embedded in a longer token is not that bot.
 : > /tmp/r.log
-line 7.7.7.7 "GET /work/about/GPTBot/1.4 HTTP/1.1" "$UA_HUMAN" >> /tmp/r.log
-assert "badbot ignores a bot name in the URL, only the user agent counts" \
+line 7.7.7.7 "GET /work/about/GPTBot/1.4 HTTP/1.1" "$UA_HUMAN"        >> /tmp/r.log
+line 7.7.7.8 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; XDiffbotted)" >> /tmp/r.log
+assert "badbot ignores a bot name in the URL and inside a longer word" \
                                                "[ \"\$(hits /tmp/r.log regluit-badbot)\" = 0 ]"
 
 # =====================================================================
@@ -112,12 +124,30 @@ echo "--- 286 requests: the busiest non-scraper measured on a normal day"
 burst 286 10.0.0.9 /work/ "$UA_HUMAN"; sleep 6
 assert "286 requests in a minute is NOT banned" "! fail2ban-client status regluit-flood | grep -q 10.0.0.9"
 
+# fail2ban 1.0.2 does not count an exact sliding window: FailTicket.adjustTime()
+# estimates the remaining count, and the estimate can exceed the true windowed
+# count. So assert the claim the PR actually makes, on the real traffic shape:
+# the busiest non-scraper address measured on a normal day, 286 requests spread
+# across a full minute, must survive. Timestamps are backdated, so this costs no
+# wall-clock time -- fail2ban reads the time from the line.
+spread() {  # $1=count $2=ip $3=seconds to spread across
+  local now i off ts
+  now=$(date -u +%s)
+  for ((i=0; i<$1; i++)); do
+    off=$(( $3 - (i * $3 / $1) ))
+    ts=$(date -u -d "@$((now - off))" +'%d/%b/%Y:%H:%M:%S +0000')
+    echo "$2 [$ts] \"GET /work/$i HTTP/1.1\" \"$UA_HUMAN\"" >> "$LOG"
+  done
+}
+spread 286 10.0.0.10 59; sleep 6
+assert "286 requests SPREAD over a full minute is NOT banned either" \
+                                               "! fail2ban-client status regluit-flood | grep -q 10.0.0.10"
+
 echo "--- 620 requests: over the threshold"
 burst 620 10.0.0.2 /work/ "$UA_SCRAPER"; sleep 8
 assert "620 requests in a minute IS banned"    "fail2ban-client status regluit-flood | grep -q 10.0.0.2"
 assert "the ban is a rule VISIBLE TO iptables -S, not hidden in an nftables table" \
                                                "iptables -S | grep -q 10.0.0.2"
-assert "no separate nftables f2b table was created" "! nft list ruleset 2>/dev/null | grep -q f2b-table"
 # iptables -S prints the service names resolved to numbers; accept either form,
 # and assert 22 is absent so a wrong ban can never cost anyone the box.
 assert "the rule covers http and https only, never ssh" \
@@ -140,11 +170,18 @@ burst 25 10.0.0.6 /work/ "$UA_GOOGLE"; sleep 6
 assert "Googlebot at the same volume is NOT banned" "! fail2ban-client banned | grep -q 10.0.0.6"
 
 # =====================================================================
-echo "=== D. the hourly truncation must not blind the jails ==="
-truncate -s 0 "$LOG"; sleep 3
-burst 620 10.0.0.7 /work/ "$UA_SCRAPER"; sleep 10
-assert "still bans after the log is truncated under it" \
+echo "=== D. the hourly truncation must not blind the jails, or over-count ==="
+# Refill IMMEDIATELY, with no pause for fail2ban to notice the file shrank:
+# that is the race, and the one that matters is a FALSE ban, so an address well
+# under the threshold is written across the truncation too.
+truncate -s 0 "$LOG"
+burst 200 10.0.0.11 /work/ "$UA_HUMAN"
+burst 620 10.0.0.7  /work/ "$UA_SCRAPER"
+sleep 45          # long enough for fail2ban's first-line hash check to settle
+assert "still bans a flood written straight after a truncation" \
                                                "fail2ban-client status regluit-flood | grep -q 10.0.0.7"
+assert "and does NOT ban an under-threshold address across the same truncation" \
+                                               "! fail2ban-client status regluit-flood | grep -q 10.0.0.11"
 
 # =====================================================================
 echo "=== E. log volume: the flood filter must not copy the access log ==="

@@ -7,10 +7,11 @@
 # TO UNBAN SOMEONE:         sudo fail2ban-client unban 1.2.3.4
 # EVERY BAN AND UNBAN:      /var/log/fail2ban.log
 #
-# Bans are REJECT, not DROP, so a wrongly banned reader gets an immediate
-# "connection refused" instead of a page that hangs forever — they can tell you
-# something is wrong. Bans cover ports 80 and 443 ONLY, so no ban can ever cost
-# anyone SSH: whatever this gets wrong, you can still get on the box and undo it.
+# Bans are REJECT, not DROP (fail2ban's default, kept deliberately): a wrongly
+# banned reader gets an immediate error rather than a page that hangs forever,
+# so they can tell you something is wrong. Bans cover ports 80 and 443 ONLY, so
+# no ban can ever cost anyone SSH: whatever this gets wrong, you can still get
+# on the box and undo it.
 
 [DEFAULT]
 # Pinned rather than left at `auto`, because `auto` picks whichever backend
@@ -23,7 +24,7 @@ backend   = polling
 # the two applied by hand during the 2026-09-17 incident — live in the iptables
 # view, and an operator who checks there during an outage must not conclude the
 # rate limiter is doing nothing. One place to look. The test asserts the rule is
-# visible to `iptables -S`, so this cannot regress silently.
+# visible to `iptables -S`.
 banaction = iptables-multiport
 usedns    = no
 port      = http,https
@@ -68,9 +69,11 @@ enabled = false
 # addresses), counting each address's busiest SLIDING 60-second window:
 #   >=100 req: 11 addresses   >=150: 7   >=300: 1   >=600: 1   >=1200: 0
 # The single address over 600 peaked at 687 and was a scraper on Google Cloud.
-# The highest that was not was 286. So this bans about one address a day, and
-# has roughly a factor of two in hand before it reaches anything that looks like
-# a reader. Deliberately not tighter: addresses in the 150-300 band are
+# The highest that was not was 286. Read that margin with care: fail2ban 1.0.2
+# does not count an exact window — FailTicket.adjustTime() ESTIMATES the
+# remaining count, and the estimate can exceed the true windowed count. So the
+# real margin is smaller than 600/286 suggests. Deliberately not tighter anyway:
+# addresses in the 150-300 band are
 # plausibly library or campus NAT gateways with many real readers behind one
 # address, and unglue.it serves libraries.
 [regluit-flood]
