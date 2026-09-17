@@ -188,9 +188,13 @@ printf '08\n' > $STATE/fail_b
 run > /dev/null
 assert "leading zero read as decimal 8" "[ \$(cat $STATE/fail_b) -eq 9 ]"
 
-echo "--- 13b. a wedge clears stale probe-B state ---"
+echo "--- 13b. probe-B state survives an A blip, clears at a declared wedge ---"
 setup 000 28 200 0
 echo 4 > $STATE/fail_b; : > $STATE/b_alerted
+run > /dev/null
+assert "A blip keeps fail_b"             "[ \$(cat $STATE/fail_b) -eq 4 ]"
+assert "A blip keeps b_alerted"          "[ -f $STATE/b_alerted ]"
+echo 2 > $STATE/fail_a
 run > /dev/null
 assert "wedge clears fail_b"             "[ ! -f $STATE/fail_b ]"
 assert "wedge clears b_alerted"          "[ ! -f $STATE/b_alerted ]"
@@ -212,6 +216,14 @@ run > /dev/null
 assert "failed restart: attempt counted" "[ \$(wc -l < $STATE/restarts) -eq 1 ]"
 assert "failed restart: says attempted"  "grep -q 'A restart was attempted' $EVID/mail"
 assert "failed restart: subject says so"  "grep -q 'Subject: .*RESTART FAILED (exit 1)' $EVID/mail"
+# Exit 124 is `timeout` killing the systemctl client, not a confirmed failure:
+# systemd's restart job may still be running and may yet succeed.
+setup 000 28 200 0
+echo 2 > $STATE/fail_a; echo 124 > $CTL/restart_rc
+run > /dev/null
+assert "timeout: subject says unknown"   "grep -q 'Subject: .*TIMED OUT .*(outcome unknown)' $EVID/mail"
+assert "timeout: not called a failure"   "! grep -q 'RESTART FAILED' $EVID/mail"
+assert "timeout: attempt still counted"  "[ \$(wc -l < $STATE/restarts) -eq 1 ]"
 assert "failed restart: reports rc 1"    "grep -q 'exited 1' $EVID/mail"
 
 echo "--- 15. undelivered cap alert is retried, restart stays barred ---"

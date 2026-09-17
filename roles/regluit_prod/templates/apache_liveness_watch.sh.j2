@@ -183,7 +183,9 @@ if [ "$A_OK" -eq 1 ]; then
     EV=$(evidence)
     BODY="Apache is answering on this box, but the application is not:
 https://${SERVER_NAME}/ returned rc=${B_RC} code=${B_CODE} on ${BFAILS} consecutive
-probes (one per minute, ${B_TIMEOUT}s timeout) from ${HOST} itself.
+probes from ${HOST} itself (${B_TIMEOUT}s timeout). Probe B runs once a minute,
+but only in a minute when Apache itself answered, so those ${BFAILS} probes span
+at least ${BFAILS} minutes and may span more.
 
 NO RESTART WAS PERFORMED, and none will be: Apache is serving, so a restart is
 not the indicated fix for a Django or database failure. Look at the app.
@@ -199,16 +201,20 @@ also returns 503 when it cannot reach the daemon process.)"
 fi
 
 # ---- probe A failed ----
-# Drop any probe-B state: B did not run this minute, and B's counter means
-# "N consecutive minutes". Without this, four slow-app timeouts before a wedge
-# plus one cold-start timeout after the restart would add up to a "5 consecutive
-# probes" alert saying NO RESTART WAS PERFORMED — sent a minute after this
-# watchdog restarted apache2 itself, spanning ~9 minutes rather than 5.
-rm -f "$STATE/fail_b" "$STATE/b_alerted"
 FAILS=$(( $(read_int "$STATE/fail_a") + 1 ))
 echo "$FAILS" > "$STATE/fail_a"
 logger -t apache_liveness "probe A failed (rc=${A_RC} code=${A_CODE}); consecutive=${FAILS}/${A_THRESHOLD}"
 [ "$FAILS" -ge "$A_THRESHOLD" ] || exit 0
+
+# A declared wedge invalidates probe B's counter, which means "N consecutive
+# observed probes" — and during a wedge B is not observed at all. Without this,
+# four slow-app timeouts before a wedge plus one cold-start timeout after the
+# restart would add up to a "5 consecutive probes" alert saying NO RESTART WAS
+# PERFORMED, sent a minute after this watchdog restarted apache2 itself.
+# Cleared HERE, at the threshold, and not on every single A failure: an isolated
+# A blip every few minutes would otherwise reset B forever, and a genuinely
+# unavailable application would never be reported at all.
+rm -f "$STATE/fail_b" "$STATE/b_alerted"
 
 # Once the cap has latched, the restart prohibition stays until A recovers, so
 # the wedged server is left intact for a human to examine. The per-minute probe
@@ -241,11 +247,13 @@ if [ ! -f "$STATE/capped" ]; then
         printf '%s\n' "$EV" | logger -t apache_liveness   # trail survives even if mail does not
         # Bounded: apache2.service stops with `apachectl graceful-stop`, which
         # waits for in-flight workers — under the very saturation this fires in,
-        # that can run to systemd's 90s stop timeout. The lock is held across it,
-        # so an unbounded hang would silently kill the watchdog for good, and the
-        # cap escalation would never be sent. 120s > systemd's 90s, so a normal
-        # slow stop still completes; exit 124 means the timeout won and is
-        # reported as a failed restart.
+        # that can run to systemd's 90s stop timeout. The lock is held for as
+        # long as this client runs, so without a bound a hang here would silently
+        # kill the watchdog for good and the cap escalation would never be sent.
+        # 120s > systemd's 90s, so a normal slow stop still completes.
+        # Exit 124 kills the systemctl CLIENT, not the systemd job: the restart
+        # may still be in progress or may yet succeed, and the lock is released
+        # while it is. So 124 is reported as "outcome unknown", not as a failure.
         timeout 120 systemctl restart apache2
         RESTART_RC=$?
         logger -t apache_liveness "systemctl restart apache2 exited ${RESTART_RC}"
@@ -255,9 +263,11 @@ needs no TLS, no Django and no database — on ${FAILS} consecutive probes
 
   systemctl restart apache2  exited ${RESTART_RC}
 
-(A non-zero exit above means the restart itself failed; the attempt still counts
-against the cap. A zero exit means apache2 came back up — it does not prove the
-site recovered. The snapshot below was taken just BEFORE the restart.)
+(Exit 0 means apache2 came back up — it does not prove the site recovered.
+Exit 124 means this watchdog stopped waiting after 120s; systemd's restart job
+may still be running and may yet succeed, so the outcome is unknown, not failed.
+Any other non-zero exit means the restart command itself failed. Every case
+counts against the cap. The snapshot below was taken just BEFORE the restart.)
 
 This is triage, not a fix: it shortens the outage and tells you it happened.
 Whatever saturated the worker pool is still doing it — on 2026-09-17 that was a
@@ -268,11 +278,11 @@ EbookFoundation/security-private#32.
 Next restart no sooner than ${COOLDOWN}s from now; at most ${CAP} per hour. Once
 the budget is spent the watchdog stops restarting and mails an escalation — but
 the cooldown is checked first, so that mail can be up to ${COOLDOWN}s late."
-        if [ "$RESTART_RC" -eq 0 ]; then
-            SUBJ="[unglue.it] apache restarted by liveness watchdog on ${HOST}"
-        else
-            SUBJ="[unglue.it] apache RESTART FAILED (exit ${RESTART_RC}) on ${HOST}"
-        fi
+        case "$RESTART_RC" in
+            0)   SUBJ="[unglue.it] apache restarted by liveness watchdog on ${HOST}" ;;
+            124) SUBJ="[unglue.it] apache restart TIMED OUT on ${HOST} (outcome unknown)" ;;
+            *)   SUBJ="[unglue.it] apache RESTART FAILED (exit ${RESTART_RC}) on ${HOST}" ;;
+        esac
         send_mail "$SUBJ" \
             || logger -t apache_liveness "sendmail failed for restart alert"
         exit 0
