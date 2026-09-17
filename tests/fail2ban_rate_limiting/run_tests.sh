@@ -176,26 +176,39 @@ assert "Googlebot at the same volume is NOT banned" "! fail2ban-client banned | 
 
 # =====================================================================
 echo "=== D. the hourly truncation must not blind the jails, or over-count ==="
+# The worry is that fail2ban keeps a byte offset into this file. Truncate it and
+# refill past that offset and fail2ban could read from the stale position, or
+# re-read a suffix it had already counted. Re-reading is the one that could ban
+# somebody who did nothing wrong.
+#
 # Two things have to be true for this to test anything.
 #
-# First, the refill must OVERTAKE the pre-truncation size before polling can
-# notice the file shrank — otherwise fail2ban simply sees a smaller file, and
-# the race never happens. That is why several thousand harmless lines go in
-# first, and why the size is measured rather than assumed.
+# First, the refill has to end up LARGER than the file it replaced, so there is
+# a stale offset to land inside. It is staged in a temp file and appended in a
+# single `cat`, so the window in which the file is small is as brief as it can
+# be made from outside the process. Honest limit: fail2ban polls once a second
+# throughout, so this cannot GUARANTEE it never observed the shrink — the test
+# demonstrates that truncate-then-immediate-refill does not produce a false ban,
+# it does not prove which internal path was taken.
 #
 # Second, the innocent address must be big enough that double-counting would
 # show: 350 is comfortably under the 600 threshold but over it if counted
 # twice. A smaller number could not tell the two cases apart.
+REFILL=/tmp/refill
+: > "$REFILL"
+gen() { local t i; t=$(NOW); for ((i=1; i<=$1; i++)); do
+          echo "$2 [$t] \"GET $3$i HTTP/1.1\" \"$4\"" >> "$REFILL"; done; }
+for i in $(seq 1 40); do gen 60 10.1.0.$i /work/ "$UA_HUMAN"; done
+gen 350 10.0.0.11 /work/ "$UA_HUMAN"
+gen 620 10.0.0.7  /work/ "$UA_SCRAPER"
+
 PRE=$(stat -c%s "$LOG")
-truncate -s 0 "$LOG"
-for i in $(seq 1 40); do burst 60 10.1.0.$i /work/ "$UA_HUMAN"; done
-burst 350 10.0.0.11 /work/ "$UA_HUMAN"
-burst 620 10.0.0.7  /work/ "$UA_SCRAPER"
+truncate -s 0 "$LOG"; cat "$REFILL" >> "$LOG"      # one append, not 3410
 POST=$(stat -c%s "$LOG")
-assert "the refill overtook the pre-truncation size, so the race was really forced (pre=$PRE post=$POST)" \
+assert "the refill landed past the old offset, so there was a stale position to hit (pre=$PRE post=$POST)" \
                                                "[ \"$POST\" -gt \"$PRE\" ]"
 sleep 45          # long enough for fail2ban's first-line hash check to settle
-assert "still bans a flood written straight after a truncation" \
+assert "still bans a flood appended straight after a truncation" \
                                                "fail2ban-client status regluit-flood | grep -q 10.0.0.7"
 assert "and does NOT ban 350 across the same truncation, which double-counting would" \
                                                "! fail2ban-client status regluit-flood | grep -q 10.0.0.11"
