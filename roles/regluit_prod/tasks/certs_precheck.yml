@@ -21,7 +21,7 @@
 # commands carry check_mode: false so that --check reports the truth instead of
 # skipping them and then judging their empty output.
 #
-# Codex review rounds 3-5 on regluit-provisioning#78.
+# Codex review rounds 3-6 on regluit-provisioning#78.
 
 - name: manage_certs and certbot_manage are mutually exclusive
   ansible.builtin.assert:
@@ -69,7 +69,18 @@
 
 - name: The stored renewal settings must match the webroot the vhost serves
   vars:
-    probe_out: "{{ certbot_renewal_probe.stdout | default('') }}"
+    # Ansible's script action runs over a pseudo-terminal, so stdout comes back
+    # with CRLF line endings. Without stripping the CR it lands inside the
+    # captures below and every equality check fails on a CORRECT config.
+    # Note the YAML style: this is a FOLDED (>-) scalar, not a double-quoted
+    # one, so '\r' reaches Jinja as the two-character escape and matches a
+    # carriage return. In a double-quoted scalar YAML would turn '\r' into a
+    # real CR first, and Jinja normalises a raw CR in template source to a
+    # newline -- so the pattern would strip NEWLINES and collapse the output
+    # into a single line. Both spellings are exercised by
+    # tests/certs_precheck_verdict_cases.yml, which is how that was caught.
+    probe_out: >-
+      {{ certbot_renewal_probe.stdout | default('') | regex_replace('\r', '') }}
     probe_authenticator: >-
       {{ probe_out | regex_search('^authenticator=(.*)$', '\1', multiline=True)
          | default([], true) | first | default('') }}
@@ -139,7 +150,7 @@
 - name: The installed certificate must cover every name the vhost serves
   vars:
     cert_names: >-
-      {{ certbot_cert_sans.stdout | default('')
+      {{ certbot_cert_sans.stdout | default('') | regex_replace('\r', '')
          | regex_findall('DNS:([A-Za-z0-9.*-]+)') | map('lower') | list }}
     expected_domains: >-
       {{ [server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []) }}

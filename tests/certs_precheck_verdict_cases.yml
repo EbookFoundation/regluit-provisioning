@@ -96,6 +96,41 @@
         rc: 0
         expect_ok: false
         stdout: ""
+      # Ansible's script action runs over a pseudo-terminal, so real output
+      # arrives CRLF-terminated. Before the CR was stripped, a CORRECT config
+      # failed here -- the CR landed inside the captures. (Review round 6.)
+      - name: "CRLF output, correct config, must still pass"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: true
+        stdout: "authenticator=webroot\r\nwebroot=test.unglue.it /var/lib/letsencrypt\r\n"
+      - name: "CRLF output, wrong webroot, must still fail"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: "authenticator=webroot\r\nwebroot=test.unglue.it /var/www/html\r\n"
+      - name: "CRLF output, two names, both correct"
+        server_name: unglue.it
+        alt_server_name: www.unglue.it
+        rc: 0
+        expect_ok: true
+        stdout: "authenticator=webroot\r\nwebroot=unglue.it /var/lib/letsencrypt\r\nwebroot=www.unglue.it /var/lib/letsencrypt\r\n"
+      # Round 6: a trailing space is a different directory to certbot, and an
+      # empty effective webroot is not ours. Neither may be tidied away here.
+      - name: "trailing space in the reported webroot must fail"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: "authenticator=webroot\nwebroot=test.unglue.it /var/lib/letsencrypt \n"
+      - name: "authenticator reported as a list must fail"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: "authenticator=['webroot', 'apache']\nwebroot=test.unglue.it /var/lib/letsencrypt\n"
 
   tasks:
     - name: Judge each probe output with the production expressions
@@ -103,7 +138,8 @@
         certbot_renewal_probe: { stdout: "{{ item.stdout }}", rc: "{{ item.rc }}" }
         server_name: "{{ item.server_name }}"
         alt_server_name: "{{ item.alt_server_name }}"
-        probe_out: "{{ certbot_renewal_probe.stdout | default('') }}"
+        probe_out: >-
+          {{ certbot_renewal_probe.stdout | default('') | regex_replace('\r', '') }}
         probe_authenticator: >-
           {{ probe_out | regex_search('^authenticator=(.*)$', '\1', multiline=True)
              | default([], true) | first | default('') }}

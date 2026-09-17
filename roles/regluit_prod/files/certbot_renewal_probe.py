@@ -48,27 +48,28 @@ def main(argv):
         sys.stderr.write("cannot parse %s: %s\n" % (path, exc))
         return 4
 
+    # Report exactly what ConfigObj returns, with no tidying. Anything this
+    # script normalises that certbot does not makes the check MORE permissive
+    # than reality: `test.unglue.it = "/var/lib/letsencrypt "` is a different
+    # directory to certbot, and `webroot_path = /a, ""` really does select the
+    # empty last entry. Both slipped through an earlier version of this script
+    # that stripped whitespace and dropped empty entries (review round 6).
+    # A value ConfigObj returns as a list prints as a list and therefore fails
+    # the playbook's equality check, which is the safe direction.
     params = conf.get('renewalparams') or {}
-    authenticator = params.get('authenticator') or ''
-    if isinstance(authenticator, list):           # not expected; be tolerant
-        authenticator = authenticator[-1] if authenticator else ''
 
+    authenticator = params.get('authenticator', '')
     webroot_map = params.get('webroot_map') or {}
+    webroot_path = params.get('webroot_path', '')
 
     # `webroot_path = /a,/b,` is a list to ConfigObj; `"/a,/b",` is one entry.
-    webroot_path = params.get('webroot_path') or ''
+    # certbot's webroot plugin falls back to the LAST entry.
     if isinstance(webroot_path, (list, tuple)):
-        entries = [str(p).strip() for p in webroot_path if str(p).strip()]
-        webroot_path = entries[-1] if entries else ''
-    else:
-        webroot_path = str(webroot_path).strip()
+        webroot_path = webroot_path[-1] if webroot_path else ''
 
-    print("authenticator=%s" % authenticator)
+    print("authenticator=%s" % (authenticator,))
     for domain in domains:
-        effective = webroot_map.get(domain, webroot_path)
-        if isinstance(effective, (list, tuple)):
-            effective = effective[-1] if effective else ''
-        print("webroot=%s %s" % (domain, str(effective).strip()))
+        print("webroot=%s %s" % (domain, webroot_map.get(domain, webroot_path)))
     return 0
 
 

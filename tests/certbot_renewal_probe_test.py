@@ -188,6 +188,35 @@ authenticator = webroot
 """,
         ['test.unglue.it'], {'test.unglue.it': ''}, '',
     ),
+    # Round 6: the probe must not tidy up what certbot does not. A trailing
+    # space inside quotes really is a different directory, and an empty final
+    # webroot_path entry really is what certbot's plugin falls back to. An
+    # earlier version stripped both and wrongly reported a passing config.
+    (
+        "map value with a trailing space inside quotes (round 6)",
+        """[renewalparams]
+authenticator = webroot
+[[webroot_map]]
+test.unglue.it = "/var/lib/letsencrypt "
+""",
+        ['test.unglue.it'], {'test.unglue.it': '/var/lib/letsencrypt '}, 'webroot',
+    ),
+    (
+        "empty final webroot_path entry (round 6)",
+        """[renewalparams]
+authenticator = webroot
+webroot_path = /var/lib/letsencrypt, ""
+""",
+        ['test.unglue.it'], {'test.unglue.it': ''}, 'webroot',
+    ),
+    (
+        "authenticator as a list must not be coerced to one value",
+        """[renewalparams]
+authenticator = webroot,apache
+webroot_path = /var/lib/letsencrypt,
+""",
+        ['test.unglue.it'], {'test.unglue.it': OURS}, "['webroot', 'apache']",
+    ),
 ]
 
 
