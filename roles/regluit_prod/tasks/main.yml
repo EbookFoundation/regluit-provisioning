@@ -4,8 +4,9 @@
   apt:
     # List taken from feature/prod-green, the branch the June 2026 prod and
     # dj42 boxes were actually built from. Python-2-era names that Ubuntu 24.04
-    # no longer offers (python-setuptools, python-dev) are gone; pkg-config is
-    # needed to build mysqlclient. python3-pip used to come from the bootstrap
+    # no longer offers (python-setuptools, python-dev) are gone; pkg-config was
+    # added on that branch for Ubuntu 24.04 (its commit doesn't say which
+    # package needs it). python3-pip used to come from the bootstrap
     # step and is kept here so a from-scratch build still gets it.
     name: ['git', 'libxml2-dev', 'libxslt1-dev', 'python3-lxml', 'python3-dev', 'python3-pip', 'python3-virtualenv', 'build-essential', 'libssl-dev', 'libffi-dev', 'default-mysql-client', 'default-libmysqlclient-dev', 'libcairo2', 'postfix', 'libjpeg-dev', 'pkg-config']
     update_cache: true
