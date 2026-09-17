@@ -5,6 +5,8 @@
 
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
+# Python the venv runs on (major.minor); see roles/regluit_prod/defaults/main.yml
+python_version: "3.12"
 virtualenv_name: "venv"
 user_name: "ubuntu"
 server_name: "unglue.it"
