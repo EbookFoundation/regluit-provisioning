@@ -1,0 +1,132 @@
+---
+# Checks how roles/regluit_prod/tasks/certs_precheck.yml JUDGES the probe's
+# output. What the probe itself reports for a given renewal config is covered
+# separately, and against the real script, by
+# tests/certbot_renewal_probe_test.py.
+#
+#   ansible-playbook -i localhost, -c local tests/certs_precheck_verdict_cases.yml
+- hosts: localhost
+  gather_facts: false
+  vars:
+    certbot_webroot: /var/lib/letsencrypt
+    cases:
+      - name: "single name, webroot, ours"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: true
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /var/lib/letsencrypt
+      - name: "single name resolved elsewhere"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /var/www/html
+      - name: "apache authenticator"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=apache
+          webroot=test.unglue.it /var/lib/letsencrypt
+      - name: "empty effective webroot"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it 
+      - name: "prefix lookalike"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /var/lib/letsencrypt-old
+      - name: "path with a comma in it is not ours"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /old,/var/lib/letsencrypt
+      - name: "path with a space in it is not ours"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /var/www/old html
+      - name: "both names ours"
+        server_name: unglue.it
+        alt_server_name: www.unglue.it
+        rc: 0
+        expect_ok: true
+        stdout: |
+          authenticator=webroot
+          webroot=unglue.it /var/lib/letsencrypt
+          webroot=www.unglue.it /var/lib/letsencrypt
+      - name: "alt name elsewhere"
+        server_name: unglue.it
+        alt_server_name: www.unglue.it
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=unglue.it /var/lib/letsencrypt
+          webroot=www.unglue.it /var/www/html
+      - name: "probe could not read the file (non-zero rc)"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 4
+        expect_ok: false
+        stdout: ""
+      - name: "probe produced nothing at all"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: ""
+
+  tasks:
+    - name: Judge each probe output with the production expressions
+      vars:
+        certbot_renewal_probe: { stdout: "{{ item.stdout }}", rc: "{{ item.rc }}" }
+        server_name: "{{ item.server_name }}"
+        alt_server_name: "{{ item.alt_server_name }}"
+        probe_out: "{{ certbot_renewal_probe.stdout | default('') }}"
+        probe_authenticator: >-
+          {{ probe_out | regex_search('^authenticator=(.*)$', '\1', multiline=True)
+             | default([], true) | first | default('') }}
+        expected_domains: >-
+          {{ [server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []) }}
+        probe_webroots: >-
+          {{ dict(probe_out | regex_findall('^webroot=(\S+) (.*)$', multiline=True)) }}
+        domains_pointing_at_us: >-
+          {{ probe_webroots | dict2items | selectattr('value', 'equalto', certbot_webroot)
+             | map(attribute='key') | list }}
+        wrong_webroots: "{{ expected_domains | reject('in', domains_pointing_at_us) | list }}"
+        verdict: >-
+          {{ (certbot_renewal_probe.rc | default(1) | int == 0)
+             and (probe_authenticator == 'webroot')
+             and (wrong_webroots | length == 0) }}
+      ansible.builtin.assert:
+        that:
+          - (verdict | bool) == (item.expect_ok | bool)
+        fail_msg: >-
+          MISMATCH on "{{ item.name }}": expected ok={{ item.expect_ok }}, got
+          {{ verdict }}. authenticator='{{ probe_authenticator }}'
+          webroots={{ probe_webroots }} wrong={{ wrong_webroots }}
+        success_msg: 'ok={{ verdict }} as expected -- {{ item.name }}'
+      loop: "{{ cases }}"
+      loop_control:
+        label: "{{ item.name }}"
