@@ -151,6 +151,14 @@
     - restart celeryd
     - restart celerybeat
 
+# First build of a new box: pass -e stop_after_settings_render=true to stop
+# here, check which database the rendered settings point at, then run again
+# without it. Nothing before this point touches the database; collectstatic
+# and migrate (tasks/apache.yml) are the first things that do.
+- name: Stop after rendering settings when asked (check the database host first)
+  meta: end_host
+  when: stop_after_settings_render | default(false) | bool
+
 - name: Copy sysadmin scripts to home directory
   become: yes
   template:
