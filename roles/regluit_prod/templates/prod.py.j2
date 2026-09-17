@@ -1,5 +1,16 @@
 # coding=utf-8
 from django.core.exceptions import ImproperlyConfigured
+{% if email_safe_mode | bool %}
+# Non-production email safety net (regluit#1238). settings/common.py reads
+# these from the environment when it is imported on the next line, so setting
+# them here covers both mod_wsgi and celery, which both load this module.
+# Do NOT set EMAIL_BACKEND in this file: that would silently undo the net.
+import os
+os.environ['EMAIL_SAFE_MODE'] = 'true'
+os.environ['EMAIL_SAFE_MODE_ALLOWED_DOMAINS'] = '{{ email_safe_mode_allowed_domains }}'
+os.environ['EMAIL_SAFE_MODE_ALLOWED_ADDRESSES'] = '{{ email_safe_mode_allowed_addresses }}'
+os.environ['EMAIL_SAFE_MODE_REDIRECT_TO'] = '{{ email_safe_mode_redirect_to }}'
+{% endif %}
 from .common import *
 
 ALLOWED_HOSTS = ['.unglue.it']

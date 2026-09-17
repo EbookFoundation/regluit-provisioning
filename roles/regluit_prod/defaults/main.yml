@@ -4,3 +4,21 @@
 # An OS package revision (3.12.3-1ubuntu0.15 -> .16) does not change this.
 # Changing it means rebuilding the venv, not just editing this value.
 python_version: "3.12"
+
+# Run celery Beat (the scheduler). Set false on a staging box built from a
+# copy of production data, so no scheduled job runs there by accident.
+celerybeat_enabled: true
+
+# Schedule mem_alert.sh and wsgi_wedge_watch.sh, which send mail through the
+# local sendmail. The scripts are installed either way; false leaves their
+# cron entries in place but commented out.
+monitoring_alerts_enabled: true
+
+# Turn on the app's non-production email safety net (regluit#1238,
+# regluit/utils/safe_email_backend.py) for both the web app and celery.
+# With no allowlist and no redirect address, the app refuses to send to
+# anyone rather than delivering to a real user.
+email_safe_mode: false
+email_safe_mode_allowed_domains: ""
+email_safe_mode_allowed_addresses: ""
+email_safe_mode_redirect_to: ""
