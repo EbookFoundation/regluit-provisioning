@@ -44,6 +44,10 @@ UA_CLAUDE_SEARCH='Mozilla/5.0 (compatible; Claude-SearchBot/1.0; +searchbot@anth
 UA_CLAUDEBOT='Mozilla/5.0 (compatible; ClaudeBot/1.0; +claudebot@anthropic.com)'
 UA_AMZN_SEARCH='Mozilla/5.0 (compatible; Amzn-SearchBot/1.0)'
 UA_META_WEB='meta-webindexer/1.0'
+UA_PERPLEXITY='Mozilla/5.0 (compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)'
+UA_PERPLEXITY_USER='Mozilla/5.0 (compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user)'
+UA_CLAUDE_USER='Mozilla/5.0 (compatible; Claude-User/1.0; +Claude-User@anthropic.com)'
+UA_AMZN_USER='Mozilla/5.0 (compatible; Amzn-User/1.0)'
 UA_HUMAN='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/145.0.0.0 Safari/537.36'
 
 fbr() { fail2ban-regex "$1" "/etc/fail2ban/filter.d/$2.conf" 2>&1; }
@@ -95,10 +99,11 @@ assert "badbot matches all six forbidden agents, versioned or not" "[ \"\$(hits 
 
 : > /tmp/ok.log
 for ua in "$UA_GOOGLE" "$UA_CHATGPT_USER" "$UA_OAI_SEARCH" "$UA_CLAUDE_SEARCH" "$UA_CLAUDEBOT" \
-          "$UA_AMZN_SEARCH" "$UA_META_WEB" "$UA_HUMAN"; do
+          "$UA_AMZN_SEARCH" "$UA_META_WEB" "$UA_PERPLEXITY" "$UA_PERPLEXITY_USER" \
+          "$UA_CLAUDE_USER" "$UA_AMZN_USER" "$UA_HUMAN"; do
   line 6.6.6.6 "GET / HTTP/1.1" "$ua" >> /tmp/ok.log
 done
-assert "badbot spares Googlebot, ChatGPT-User, OAI-SearchBot, Claude-SearchBot, ClaudeBot, Amzn-SearchBot, meta-webindexer, a reader" \
+assert "badbot spares all eleven crawlers robots.txt allows, and a reader" \
                                                "[ \"\$(hits /tmp/ok.log regluit-badbot)\" = 0 ]"
 
 # A bot name inside the requested URL must not ban the person who asked for it,
@@ -171,16 +176,28 @@ assert "Googlebot at the same volume is NOT banned" "! fail2ban-client banned | 
 
 # =====================================================================
 echo "=== D. the hourly truncation must not blind the jails, or over-count ==="
-# Refill IMMEDIATELY, with no pause for fail2ban to notice the file shrank:
-# that is the race, and the one that matters is a FALSE ban, so an address well
-# under the threshold is written across the truncation too.
+# Two things have to be true for this to test anything.
+#
+# First, the refill must OVERTAKE the pre-truncation size before polling can
+# notice the file shrank — otherwise fail2ban simply sees a smaller file, and
+# the race never happens. That is why several thousand harmless lines go in
+# first, and why the size is measured rather than assumed.
+#
+# Second, the innocent address must be big enough that double-counting would
+# show: 350 is comfortably under the 600 threshold but over it if counted
+# twice. A smaller number could not tell the two cases apart.
+PRE=$(stat -c%s "$LOG")
 truncate -s 0 "$LOG"
-burst 200 10.0.0.11 /work/ "$UA_HUMAN"
+for i in $(seq 1 40); do burst 60 10.1.0.$i /work/ "$UA_HUMAN"; done
+burst 350 10.0.0.11 /work/ "$UA_HUMAN"
 burst 620 10.0.0.7  /work/ "$UA_SCRAPER"
+POST=$(stat -c%s "$LOG")
+assert "the refill overtook the pre-truncation size, so the race was really forced (pre=$PRE post=$POST)" \
+                                               "[ \"$POST\" -gt \"$PRE\" ]"
 sleep 45          # long enough for fail2ban's first-line hash check to settle
 assert "still bans a flood written straight after a truncation" \
                                                "fail2ban-client status regluit-flood | grep -q 10.0.0.7"
-assert "and does NOT ban an under-threshold address across the same truncation" \
+assert "and does NOT ban 350 across the same truncation, which double-counting would" \
                                                "! fail2ban-client status regluit-flood | grep -q 10.0.0.11"
 
 # =====================================================================
