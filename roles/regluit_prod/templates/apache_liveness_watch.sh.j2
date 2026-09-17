@@ -105,7 +105,13 @@ fi
 # exit non-zero on a truncated or reset transfer after the status line): for a
 # liveness check, "did not complete the cheapest possible request" is the
 # condition we care about.
-A_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time "$A_TIMEOUT" \
+# `-q` FIRST (it only works in first position) ignores root's .curlrc, and
+# --noproxy '*' ignores http_proxy/https_proxy. Without both, a proxy setting or
+# a stray .curlrc could send this probe OFF THE BOX — which would defeat the
+# whole point, since the failure being watched for is Apache workers blocked on
+# an outbound call. A .curlrc enabling -L would also make this follow its own
+# 301 into the HTTPS vhost and Django.
+A_CODE=$(curl -q --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time "$A_TIMEOUT" \
              -H "Host: ${SERVER_NAME}" http://127.0.0.1/ 2>/dev/null)
 A_RC=$?
 A_OK=0
@@ -148,7 +154,9 @@ if [ "$A_OK" -eq 1 ]; then
     rm -f "$STATE/fail_a" "$STATE/capped" "$STATE/cap_alerted"
 
     # ---- probe B: is the application answering? (alert-only) ----
-    B_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time "$B_TIMEOUT" \
+    # -q and --noproxy for the same reason as probe A; --resolve pins the name
+    # to the loopback so there is no DNS lookup either.
+    B_CODE=$(curl -q --noproxy '*' -sk -o /dev/null -w '%{http_code}' --max-time "$B_TIMEOUT" \
                  --resolve "${SERVER_NAME}:443:127.0.0.1" "https://${SERVER_NAME}/" 2>/dev/null)
     B_RC=$?
     # 503 is healthy ONLY when the maintenance flag is actually set: mod_wsgi

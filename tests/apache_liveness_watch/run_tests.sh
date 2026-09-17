@@ -73,6 +73,8 @@ assert "healthy: no failure counter"     "[ ! -f $STATE/fail_a ]"
 assert "healthy: both probes ran"        "[ \$(wc -l < $EVID/curl_calls) -eq 2 ]"
 assert "probe A hits 127.0.0.1 on :80"   "grep -q 'A .*http://127.0.0.1/' $EVID/curl_calls"
 assert "probe B resolves to loopback"    "grep -q 'B .*--resolve unglue.it:443:127.0.0.1' $EVID/curl_calls"
+assert "both probes ignore .curlrc"      "[ \$(grep -c -- '-q --noproxy \*' $EVID/curl_calls) -eq 2 ]"
+assert "neither probe follows redirects" "! grep -qE ' -L( |$)|--location' $EVID/curl_calls"
 
 echo "--- 2. 503 is healthy only while the maintenance flag is set ---"
 setup 301 0 503 0
