@@ -1,0 +1,235 @@
+#!/bin/bash
+# Apache liveness watchdog — restarts apache2 when the box stops answering its
+# own cheapest request. Managed by Ansible (regluit_prod).
+# See EbookFoundation/security-private#32 (2026-09-17, ~30 min outage).
+#
+# Why: on 2026-09-17 every Apache request worker was busy under a distributed
+# crawl, the listen queue filled (511, its limit), and the server answered
+# nothing — not even a static file requested on the box itself. The machine was
+# healthy: load ~0, memory free, DB fine. `systemctl restart apache2` fixed it
+# instantly. Nobody knew for 30 minutes. The existing wsgi_wedge_watch.sh
+# watches a different failure (a mod_wsgi daemon whose Python failed to load)
+# and correctly found nothing.
+#
+# This is ON-BOX TRIAGE. It shortens an outage; it does not prevent one, and it
+# is not a substitute for filtering the crawl upstream.
+#
+# Two probes, deliberately different consequences:
+#
+#   A  http://127.0.0.1/  -> the port-80 vhost, whose entire body is a redirect
+#      to https. No TLS, no WSGI, no Django, no database, no disk. Measured on
+#      production: 301 in 0.5 ms. If this produces no HTTP status in A_TIMEOUT
+#      seconds, Apache has not answered the cheapest possible request from the
+#      box itself. RESTART-ELIGIBLE.
+#
+#   B  https://<server_name>/ over the loopback -> TLS, mod_wsgi, Django, MySQL.
+#      ALERT-ONLY, never restarts: if Apache is accepting and serving but the
+#      app or the database is broken, a restart is not the indicated fix, it
+#      destroys the evidence, and it risks a reconnect stampede against a
+#      struggling database. (Not that a restart can never help an application
+#      failure — it sometimes can; only that B alone does not justify it.)
+#      Runs only when A passed, so the watchdog never piles work onto a server
+#      that is already unable to answer. `-k` on purpose: an expired
+#      certificate must not be read as "wedged", because a restart will not fix
+#      one. 503 is treated as healthy — that is deliberate maintenance mode.
+#
+# Honest limits:
+# - A failing proves the box is locally unresponsive. It does not prove the
+#   cause, and it does not prove the condition is permanent: a cheap request
+#   still queues behind the shared worker pool, so sustained overload that
+#   would have recovered on its own can trigger a restart. The cooldown and the
+#   restart cap below bound the damage that can do.
+# - Restart attempts are capped. An endlessly restarting Apache is worse than a
+#   down one, because it destroys the evidence of why it went down.
+# - Ordinary deploys and provisioning runs restart apache2 in under a second, so
+#   they cannot accumulate three consecutive failures. But to stop Apache
+#   DELIBERATELY for more than ~3 minutes, disable this cron first — the
+#   watchdog cannot tell your `systemctl stop` from a wedge, and will start it
+#   again. (Maintenance mode needs nothing: it keeps Apache running, and the
+#   port-80 redirect probe A uses is unaffected by it.)
+
+set -u
+
+# ---- tuning (deliberately constants, not Ansible variables: one place to read,
+# ---- one place to change, no new knobs to keep in sync across group_vars) ----
+A_TIMEOUT=10          # seconds; ~1000x the measured healthy response for probe A
+A_THRESHOLD=3         # consecutive probe-A failures before a restart is considered
+B_TIMEOUT=25          # seconds; the home page takes 1.2 s healthy, longer under load
+B_THRESHOLD=5         # consecutive probe-B failures before one alert
+COOLDOWN=900          # seconds between restart attempts
+CAP=3                 # max restart attempts in a rolling hour, then stop and shout
+
+SERVER_NAME="{{ server_name }}"
+TO="{{ mem_alert_email | default('notices@gluejar.com') }}"
+FROM="{{ default_from_email | default('notices@gluejar.com') }}"
+HOST=$(hostname)
+STATE=/run/apache_liveness          # tmpfs: cleared on reboot, which is correct —
+mkdir -p "$STATE" || exit 0         # a reboot has already restarted apache2
+
+# Single instance, held for the whole run INCLUDING the restart: a hung
+# `systemctl restart` must not let the next minute's cron start a second one.
+exec 9>"$STATE/lock" || exit 0
+flock -n 9 || exit 0
+
+# A counter file holds one small decimal number. Anything else — truncated
+# writes, a stray editor, a file that was never ours — reads as 0 rather than
+# aborting the script under `set -u` or tripping octal arithmetic on "08".
+read_int() {
+    local v
+    v=$(head -c 12 "$1" 2>/dev/null | tr -dc '0-9')
+    echo $(( 10#0${v:-0} ))
+}
+
+# ---- probe A: does Apache produce any HTTP status at all? ----
+# curl exits 0 when the transfer completed, whatever the status. We treat a
+# non-zero exit as a failed probe even if a status code did arrive (curl can
+# exit non-zero on a truncated or reset transfer after the status line): for a
+# liveness check, "did not complete the cheapest possible request" is the
+# condition we care about.
+A_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time "$A_TIMEOUT" \
+             -H "Host: ${SERVER_NAME}" http://127.0.0.1/ 2>/dev/null)
+A_RC=$?
+A_OK=0
+[ "$A_RC" -eq 0 ] && [ -n "$A_CODE" ] && [ "$A_CODE" != "000" ] && A_OK=1
+
+B_RC="not run"; B_CODE="not run"
+
+evidence() {
+    echo "time (UTC):  $(date -u)"
+    echo "probe A:     rc=${A_RC} code=${A_CODE} consecutive failures=${FAILS} (threshold ${A_THRESHOLD}, one probe/min)"
+    echo "probe B:     rc=${B_RC} code=${B_CODE}"
+    echo
+    echo "listen queues (Recv-Q = connections waiting to be accepted, Send-Q = backlog limit):"
+    ss -ltnH '( sport = :80 or sport = :443 )' 2>/dev/null
+    echo
+    echo "last 20 lines of /var/log/apache2/error.log (the MAIN server log — where"
+    echo "AH00484 'server reached MaxRequestWorkers' lands; the vhost's dated log does not get it):"
+    tail -20 /var/log/apache2/error.log 2>/dev/null
+}
+
+send_mail() {   # $1 = subject
+    {
+        echo "From: $FROM"
+        echo "To: $TO"
+        echo "Subject: $1"
+        echo
+        echo "$BODY"
+        echo
+        evidence
+    } | /usr/sbin/sendmail -t
+}
+
+if [ "$A_OK" -eq 1 ]; then
+    # Alive. Clear the consecutive-failure count and release the cap latch.
+    # NOT cleared: $STATE/restarts — recovery must not refill the hourly restart
+    # budget, or a server that recovers briefly between restarts defeats the cap.
+    rm -f "$STATE/fail_a" "$STATE/capped" "$STATE/cap_alerted"
+
+    # ---- probe B: is the application answering? (alert-only) ----
+    B_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time "$B_TIMEOUT" \
+                 --resolve "${SERVER_NAME}:443:127.0.0.1" "https://${SERVER_NAME}/" 2>/dev/null)
+    B_RC=$?
+    case "$B_RC:$B_CODE" in
+        0:200|0:503) rm -f "$STATE/fail_b" "$STATE/b_alerted"; exit 0 ;;
+    esac
+    BFAILS=$(( $(read_int "$STATE/fail_b") + 1 ))
+    echo "$BFAILS" > "$STATE/fail_b"
+    logger -t apache_liveness "probe B failed (rc=${B_RC} code=${B_CODE}); consecutive=${BFAILS}"
+    [ "$BFAILS" -ge "$B_THRESHOLD" ] || exit 0
+    [ -f "$STATE/b_alerted" ] && exit 0          # one alert per episode
+    FAILS=0
+    BODY="Apache is answering on this box, but the application is not:
+https://${SERVER_NAME}/ returned rc=${B_RC} code=${B_CODE} on ${BFAILS} consecutive
+probes (one per minute, ${B_TIMEOUT}s timeout) from ${HOST} itself.
+
+NO RESTART WAS PERFORMED, and none will be: Apache is serving, so a restart is
+not the indicated fix for a Django or database failure. Look at the app.
+(503 is not reported here — that is deliberate maintenance mode.)"
+    if send_mail "[unglue.it] app not answering on ${HOST} (apache is alive)"; then
+        touch "$STATE/b_alerted"                 # dedup flag only after a successful send
+    else
+        logger -t apache_liveness "sendmail failed for probe-B alert; will retry next run"
+    fi
+    exit 0
+fi
+
+# ---- probe A failed ----
+FAILS=$(( $(read_int "$STATE/fail_a") + 1 ))
+echo "$FAILS" > "$STATE/fail_a"
+logger -t apache_liveness "probe A failed (rc=${A_RC} code=${A_CODE}); consecutive=${FAILS}/${A_THRESHOLD}"
+[ "$FAILS" -ge "$A_THRESHOLD" ] || exit 0
+
+# Once the cap has latched, the restart prohibition stays until A recovers, so
+# the wedged server is left intact for a human to examine. The per-minute probe
+# line above still goes to syslog — that is the record that it is still down.
+if [ ! -f "$STATE/capped" ]; then
+    NOW=$(date +%s)
+    # Rolling hour: prune by age only. Keep just the timestamp field, so a
+    # malformed line cannot survive into the arithmetic below.
+    if [ -f "$STATE/restarts" ]; then
+        awk -v cutoff=$(( NOW - 3600 )) '$1 ~ /^[0-9]{1,12}$/ && $1 >= cutoff { print $1 }' \
+            "$STATE/restarts" > "$STATE/restarts.tmp" && mv "$STATE/restarts.tmp" "$STATE/restarts"
+    fi
+    LAST=$(tail -1 "$STATE/restarts" 2>/dev/null)
+    case "${LAST:-}" in ''|*[!0-9]*) LAST="" ;; esac   # belt and braces if the prune failed
+    if [ -n "$LAST" ] && [ $(( NOW - LAST )) -lt "$COOLDOWN" ]; then
+        logger -t apache_liveness "wedged, but last restart was $(( NOW - LAST ))s ago (cooldown ${COOLDOWN}s); not restarting"
+        exit 0
+    fi
+
+    # Every attempt counts toward the cap, whether or not the restart succeeded.
+    COUNT=0
+    [ -f "$STATE/restarts" ] && COUNT=$(wc -l < "$STATE/restarts")
+    if [ "${COUNT:-0}" -ge "$CAP" ]; then
+        touch "$STATE/capped"
+        logger -t apache_liveness "wedged, restart cap (${CAP}/hour) reached; NOT restarting — escalating"
+    else
+        echo "$NOW" >> "$STATE/restarts"
+        logger -t apache_liveness "wedged after ${FAILS} consecutive failed probes; restarting apache2"
+        evidence | logger -t apache_liveness      # trail survives even if mail does not
+        systemctl restart apache2
+        RESTART_RC=$?
+        logger -t apache_liveness "systemctl restart apache2 exited ${RESTART_RC}"
+        BODY="${HOST} stopped answering http://127.0.0.1/ — the port-80 redirect, which
+needs no TLS, no Django and no database — on ${FAILS} consecutive probes
+(one per minute, ${A_TIMEOUT}s timeout). A restart was attempted:
+
+  systemctl restart apache2  exited ${RESTART_RC}
+
+(A non-zero exit above means the restart itself failed; the attempt still counts
+against the cap.)
+
+This is triage, not a fix: it shortens the outage and tells you it happened. The
+condition underneath (a distributed crawl saturating the worker pool on
+2026-09-17) is not addressed by a restart. See
+EbookFoundation/security-private#32.
+
+Next restart no sooner than ${COOLDOWN}s from now; at most ${CAP} per hour, after
+which the watchdog stops and escalates instead."
+        send_mail "[unglue.it] apache restarted by liveness watchdog on ${HOST}" \
+            || logger -t apache_liveness "sendmail failed for restart alert"
+        exit 0
+    fi
+fi
+
+# ---- capped: escalate once, and keep retrying until the mail actually leaves ----
+# Reached either by latching just now or by a later run finding the latch. The
+# alert flag is separate from the latch so a sendmail failure cannot silently
+# swallow the one message that says "a human needs to look at this".
+[ -f "$STATE/cap_alerted" ] && exit 0
+BODY="${HOST} is not answering http://127.0.0.1/, and the watchdog has already
+attempted ${CAP} restarts within the last hour. It is NOT restarting Apache
+again, so the server is left as it is for you to look at.
+
+(Attempts are counted whether or not the restart command itself succeeded, and a
+brief recovery does not refill the hourly budget — so this says the budget is
+spent, not that ${CAP} successful restarts each failed to help.)
+
+Restarting is evidently not the fix. Repeated restarts would only destroy the
+evidence of what is. See EbookFoundation/security-private#32."
+if send_mail "[unglue.it] apache WEDGED on ${HOST} — NOT restarting (cap reached)"; then
+    touch "$STATE/cap_alerted"
+else
+    logger -t apache_liveness "sendmail failed for cap-reached alert; will retry next run"
+fi
+exit 0
