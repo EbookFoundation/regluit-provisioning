@@ -221,6 +221,13 @@
 # - name: Run mysql tasks
 #   import_tasks: mysql.yml
 
+# Must precede apache.yml: it checks that this host's stored certificate
+# renewal settings are compatible with the ACME challenge Alias that
+# apache.conf.j2 is about to write. Failing afterwards would leave an
+# incompatible apache config on disk for the next restart to pick up.
+- name: Run certificate pre-checks (before apache's config is rewritten)
+  import_tasks: certs_precheck.yml
+
 - name: Run apache tasks
   import_tasks: apache.yml
 

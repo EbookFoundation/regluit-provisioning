@@ -61,49 +61,10 @@
   register: certbot_cert
   tags: [certs]
 
-# A host that already has a certificate skips issuance below, so its stored
-# renewal parameters are whatever they were when the lineage was created --
-# but the port-80 vhost now aliases /.well-known/acme-challenge to
-# certbot_webroot, and an Alias shadows the document root for that path. If
-# the stored webroot_path points somewhere else, the next UNATTENDED renewal
-# writes its token where apache no longer looks, renewal 404s, and the only
-# signal is certbot's own mail: silent until the certificate expires.
-# So read the stored parameters and fail loudly on a mismatch. Read-only, no
-# network. (Found by review of #78; the reconciling fix would be to re-run
-# certonly with --keep-until-expiring, which needs a look at a live renewal
-# config first -- see the pull request.)
-- name: Read the stored renewal parameters
-  become: yes
-  slurp:
-    src: "/etc/letsencrypt/renewal/{{ server_name }}.conf"
-  register: certbot_renewal_conf
-  when: certbot_cert.stat.exists
-  failed_when: false
-  tags: [certs]
-
-- name: The stored renewal webroot must be the one the vhost serves
-  vars:
-    renewal_text: "{{ (certbot_renewal_conf.content | default('') | b64decode) if (certbot_renewal_conf.content is defined) else '' }}"
-  ansible.builtin.assert:
-    that:
-      - certbot_renewal_conf.content is defined
-      - renewal_text | regex_search('^\s*authenticator\s*=\s*webroot\s*$', multiline=True)
-      # certbot writes the path both as `webroot_path = <path>,` (trailing
-      # comma) and under [[webroot_map]]; accept either spelling.
-      - renewal_text | regex_search('(^|[\s,=])' ~ (certbot_webroot | regex_escape) ~ '\s*,?\s*$', multiline=True)
-    fail_msg: >-
-      {{ server_name }} already has a certificate, but its renewal config
-      (/etc/letsencrypt/renewal/{{ server_name }}.conf) is unreadable, or does
-      not use the webroot authenticator rooted at {{ certbot_webroot }} --
-      the only path the port-80 vhost serves ACME challenges from. Unattended
-      renewal would fail silently. Reconcile it on the host with:
-      certbot certonly --non-interactive --webroot -w {{ certbot_webroot }}
-      --cert-name {{ server_name }} -d {{ server_name }}
-      {{ '-d ' ~ alt_server_name if alt_server_name | default('') != '' else '' }}
-      --keep-until-expiring
-    success_msg: "Stored renewal webroot matches {{ certbot_webroot }}."
-  when: certbot_cert.stat.exists
-  tags: [certs]
+# Whether an existing certificate's stored renewal settings are compatible
+# with the challenge Alias apache.conf.j2 writes is checked in
+# tasks/certs_precheck.yml, which runs BEFORE apache.yml rewrites the config.
+# By the time this file runs, that has already passed.
 
 # First issuance only. apache has to be running the rendered config (port-80
 # challenge alias) before Let's Encrypt fetches the challenge, and the
