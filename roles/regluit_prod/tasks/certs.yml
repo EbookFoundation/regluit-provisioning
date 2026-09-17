@@ -12,6 +12,23 @@
 # Production has manage_certs false and certbot_manage unset: this role does
 # nothing about its certificate, as before.
 
+# "At most one" was only a comment, and manage_certs defaults to TRUE: a host
+# that sets certbot_manage and forgets manage_certs: false would run both
+# flows, and apache.conf.j2 would then emit the legacy /etc/ssl cert paths
+# inside the <IfFile /etc/letsencrypt/...> guard -- so the gate opens the
+# moment certbot succeeds, onto a vhost pointing at files that do not exist.
+# Make the invariant real. (Found by review of #78.)
+- name: manage_certs and certbot_manage are mutually exclusive
+  ansible.builtin.assert:
+    that:
+      - not (manage_certs | default(true) | bool and certbot_manage | default(false) | bool)
+    fail_msg: >-
+      Both manage_certs and certbot_manage are on for {{ inventory_hostname }}.
+      A host uses at most one certificate flow; a certbot host needs
+      manage_certs: false (see group_vars/test).
+    success_msg: "One certificate flow at most, as required."
+  tags: [certs]
+
 - name: Legacy ACME certificate flow
   import_tasks: certs_acme_legacy.yml
   when: manage_certs | default(true) | bool
