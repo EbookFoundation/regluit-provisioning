@@ -11,7 +11,7 @@
 #
 # WHAT IT DOES (default)
 #   1. git checkout {{ git_branch }} (force) into {{ project_path }}
-#   2. restart apache2, celeryd, celerybeat
+#   2. restart apache2, celeryd, and celerybeat unless celerybeat_enabled is false
 #   3. print the deployed SHA so you can verify  deployed == branch tip
 #
 # WHAT IT DOES NOT DO (by design — "no DB / no cert")
@@ -90,11 +90,17 @@
         name: celeryd
         state: restarted
 
+    # Disabling a service does not stop an explicit restart, so a code deploy
+    # would otherwise start Beat again on a box that provisioning deliberately
+    # keeps it off (celerybeat_enabled: false). Default true: unchanged for
+    # production. deploy.yml does not import the role, so the role default is
+    # not in scope here and the default has to be repeated.
     - name: Restart celerybeat
       become: yes
       service:
         name: celerybeat
         state: restarted
+      when: celerybeat_enabled | default(true) | bool
 
     - name: Report deployed revision
       debug:
