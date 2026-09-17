@@ -31,7 +31,9 @@
 #      Runs only when A passed, so the watchdog never piles work onto a server
 #      that is already unable to answer. `-k` on purpose: an expired
 #      certificate must not be read as "wedged", because a restart will not fix
-#      one. 503 is treated as healthy — that is deliberate maintenance mode.
+#      one. A 503 counts as healthy only while the maintenance flag file
+#      /var/www/maintenance/MAINTENANCE_ON exists, because mod_wsgi also
+#      answers 503 when it cannot reach the daemon process.
 #
 # Honest limits:
 # - A failing proves the box is locally unresponsive. It does not prove the
@@ -71,13 +73,18 @@ mkdir -p "$STATE" || exit 0         # a reboot has already restarted apache2
 exec 9>"$STATE/lock" || exit 0
 flock -n 9 || exit 0
 
-# A counter file holds one small decimal number. Anything else — truncated
-# writes, a stray editor, a file that was never ours — reads as 0 rather than
-# aborting the script under `set -u` or tripping octal arithmetic on "08".
+# A counter file holds one small decimal number. Anything that is not exactly
+# that — a truncated write, a stray editor, a file that was never ours — reads
+# as 0, rather than aborting under `set -u`, tripping octal arithmetic on "08",
+# or (worse) having its digits salvaged: "abc2def" must be 0, not 2, because a
+# salvaged digit could carry a counter over a threshold it never reached.
 read_int() {
     local v
-    v=$(head -c 12 "$1" 2>/dev/null | tr -dc '0-9')
-    echo $(( 10#0${v:-0} ))
+    v=$(head -c 12 "$1" 2>/dev/null | head -n 1 | tr -d '[:space:]')
+    case "$v" in
+        ''|*[!0-9]*) echo 0 ;;
+        *)           echo $(( 10#$v )) ;;
+    esac
 }
 
 # ---- probe A: does Apache produce any HTTP status at all? ----
@@ -107,6 +114,9 @@ evidence() {
     tail -20 /var/log/apache2/error.log 2>/dev/null
 }
 
+# $EV is a snapshot taken by the caller at the moment that matters — for a
+# restart, BEFORE apache2 is bounced, so the mail shows the wedged state rather
+# than the healthy one a restart leaves behind.
 send_mail() {   # $1 = subject
     {
         echo "From: $FROM"
@@ -115,7 +125,7 @@ send_mail() {   # $1 = subject
         echo
         echo "$BODY"
         echo
-        evidence
+        echo "$EV"
     } | /usr/sbin/sendmail -t
 }
 
@@ -129,8 +139,13 @@ if [ "$A_OK" -eq 1 ]; then
     B_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time "$B_TIMEOUT" \
                  --resolve "${SERVER_NAME}:443:127.0.0.1" "https://${SERVER_NAME}/" 2>/dev/null)
     B_RC=$?
-    case "$B_RC:$B_CODE" in
-        0:200|0:503) rm -f "$STATE/fail_b" "$STATE/b_alerted"; exit 0 ;;
+    # 503 is healthy ONLY when the maintenance flag is actually set: mod_wsgi
+    # also answers 503 when apache cannot reach the daemon process, which is a
+    # real outage, not a deliberate one.
+    B_MAINT=0
+    [ "$B_CODE" = "503" ] && [ -f /var/www/maintenance/MAINTENANCE_ON ] && B_MAINT=1
+    case "$B_RC:$B_CODE:$B_MAINT" in
+        0:200:*|0:503:1) rm -f "$STATE/fail_b" "$STATE/b_alerted"; exit 0 ;;
     esac
     BFAILS=$(( $(read_int "$STATE/fail_b") + 1 ))
     echo "$BFAILS" > "$STATE/fail_b"
@@ -138,13 +153,16 @@ if [ "$A_OK" -eq 1 ]; then
     [ "$BFAILS" -ge "$B_THRESHOLD" ] || exit 0
     [ -f "$STATE/b_alerted" ] && exit 0          # one alert per episode
     FAILS=0
+    EV=$(evidence)
     BODY="Apache is answering on this box, but the application is not:
 https://${SERVER_NAME}/ returned rc=${B_RC} code=${B_CODE} on ${BFAILS} consecutive
 probes (one per minute, ${B_TIMEOUT}s timeout) from ${HOST} itself.
 
 NO RESTART WAS PERFORMED, and none will be: Apache is serving, so a restart is
 not the indicated fix for a Django or database failure. Look at the app.
-(503 is not reported here — that is deliberate maintenance mode.)"
+(A 503 while /var/www/maintenance/MAINTENANCE_ON exists is treated as healthy
+and never reaches this mail; a 503 without that flag does, because mod_wsgi
+also returns 503 when it cannot reach the daemon process.)"
     if send_mail "[unglue.it] app not answering on ${HOST} (apache is alive)"; then
         touch "$STATE/b_alerted"                 # dedup flag only after a successful send
     else
@@ -186,7 +204,8 @@ if [ ! -f "$STATE/capped" ]; then
     else
         echo "$NOW" >> "$STATE/restarts"
         logger -t apache_liveness "wedged after ${FAILS} consecutive failed probes; restarting apache2"
-        evidence | logger -t apache_liveness      # trail survives even if mail does not
+        EV=$(evidence)                            # the WEDGED state, captured before the bounce
+        printf '%s\n' "$EV" | logger -t apache_liveness   # trail survives even if mail does not
         systemctl restart apache2
         RESTART_RC=$?
         logger -t apache_liveness "systemctl restart apache2 exited ${RESTART_RC}"
@@ -197,7 +216,8 @@ needs no TLS, no Django and no database — on ${FAILS} consecutive probes
   systemctl restart apache2  exited ${RESTART_RC}
 
 (A non-zero exit above means the restart itself failed; the attempt still counts
-against the cap.)
+against the cap. A zero exit means apache2 came back up — it does not prove the
+site recovered. The snapshot below was taken just BEFORE the restart.)
 
 This is triage, not a fix: it shortens the outage and tells you it happened. The
 condition underneath (a distributed crawl saturating the worker pool on
@@ -206,7 +226,12 @@ EbookFoundation/security-private#32.
 
 Next restart no sooner than ${COOLDOWN}s from now; at most ${CAP} per hour, after
 which the watchdog stops and escalates instead."
-        send_mail "[unglue.it] apache restarted by liveness watchdog on ${HOST}" \
+        if [ "$RESTART_RC" -eq 0 ]; then
+            SUBJ="[unglue.it] apache restarted by liveness watchdog on ${HOST}"
+        else
+            SUBJ="[unglue.it] apache RESTART FAILED (exit ${RESTART_RC}) on ${HOST}"
+        fi
+        send_mail "$SUBJ" \
             || logger -t apache_liveness "sendmail failed for restart alert"
         exit 0
     fi
@@ -217,16 +242,19 @@ fi
 # alert flag is separate from the latch so a sendmail failure cannot silently
 # swallow the one message that says "a human needs to look at this".
 [ -f "$STATE/cap_alerted" ] && exit 0
-BODY="${HOST} is not answering http://127.0.0.1/, and the watchdog has already
-attempted ${CAP} restarts within the last hour. It is NOT restarting Apache
+EV=$(evidence)
+BODY="${HOST} is not answering http://127.0.0.1/, and the watchdog has spent its
+restart budget: ${CAP} attempts per rolling hour. It is NOT restarting Apache
 again, so the server is left as it is for you to look at.
 
 (Attempts are counted whether or not the restart command itself succeeded, and a
-brief recovery does not refill the hourly budget — so this says the budget is
-spent, not that ${CAP} successful restarts each failed to help.)
+brief recovery does not refill the budget — so this says the budget is spent. It
+does not say that ${CAP} successful restarts each failed to help, and if this
+mail is a retry of an earlier undelivered one, some of those attempts may by now
+have aged out of the hour.)
 
-Restarting is evidently not the fix. Repeated restarts would only destroy the
-evidence of what is. See EbookFoundation/security-private#32."
+The watchdog stops here on purpose: repeated restarts would destroy the evidence
+of whatever is actually wrong. See EbookFoundation/security-private#32."
 if send_mail "[unglue.it] apache WEDGED on ${HOST} — NOT restarting (cap reached)"; then
     touch "$STATE/cap_alerted"
 else

@@ -74,10 +74,14 @@ assert "healthy: both probes ran"        "[ \$(wc -l < $EVID/curl_calls) -eq 2 ]
 assert "probe A hits 127.0.0.1 on :80"   "grep -q 'A .*http://127.0.0.1/' $EVID/curl_calls"
 assert "probe B resolves to loopback"    "grep -q 'B .*--resolve unglue.it:443:127.0.0.1' $EVID/curl_calls"
 
-echo "--- 2. maintenance mode: app returns 503 ---"
+echo "--- 2. 503 is healthy only while the maintenance flag is set ---"
 setup 301 0 503 0
+mkdir -p /var/www/maintenance; : > /var/www/maintenance/MAINTENANCE_ON
 run > /dev/null
-assert "503 is not an app failure"       "[ ! -f $STATE/fail_b ] && [ ! -f $EVID/mail ]"
+assert "503 + flag: not a failure"       "[ ! -f $STATE/fail_b ] && [ ! -f $EVID/mail ]"
+rm -f /var/www/maintenance/MAINTENANCE_ON
+run > /dev/null
+assert "503 without flag: counted"       "[ \$(cat $STATE/fail_b) -eq 1 ]"
 
 echo "--- 3. first apache failure: count, do not act ---"
 setup 000 28 200 0
@@ -93,6 +97,7 @@ echo 2 > $STATE/fail_a
 run > /dev/null
 assert "3rd failure: apache restarted"   "grep -q 'SYSTEMCTL restart apache2' $EVID/systemctl"
 assert "3rd failure: mail sent"          "grep -q 'Subject: .*apache restarted by liveness watchdog' $EVID/mail"
+assert "mail shows PRE-restart evidence" "grep -q 'consecutive failures=3' $EVID/mail"
 assert "mail names the exit code"        "grep -q 'exited 0' $EVID/mail"
 assert "evidence: listen queues"         "grep -q '\*:443' $EVID/mail"
 assert "evidence: apache error log tail" "grep -q 'AH00484' $EVID/mail"
@@ -163,12 +168,12 @@ assert "mail failed: logged"             "grep -q 'sendmail failed' $EVID/logger
 
 echo "--- 13. malformed state files read as zero, not as a crash ---"
 setup 000 28 200 0
-printf 'garbage' > $STATE/fail_a
+printf 'abc2def' > $STATE/fail_a
 printf '08\n'    > $STATE/fail_b
 printf '%s junk\nnot-a-number\n' "$(date -d '30 seconds ago' +%s)" > $STATE/restarts
 RC=$(run)
 assert "malformed: exit 0"               "[ $RC -eq 0 ]"
-assert "malformed counter restarts at 1" "[ \$(cat $STATE/fail_a) -eq 1 ]"
+assert "malformed digits NOT salvaged"   "[ \$(cat $STATE/fail_a) -eq 1 ]"
 assert "malformed: no restart at 1/3"    "[ ! -f $EVID/systemctl ]"
 echo 2 > $STATE/fail_a
 run > /dev/null
@@ -181,6 +186,7 @@ echo 2 > $STATE/fail_a; echo 1 > $CTL/restart_rc
 run > /dev/null
 assert "failed restart: attempt counted" "[ \$(wc -l < $STATE/restarts) -eq 1 ]"
 assert "failed restart: says attempted"  "grep -q 'A restart was attempted' $EVID/mail"
+assert "failed restart: subject says so"  "grep -q 'Subject: .*RESTART FAILED (exit 1)' $EVID/mail"
 assert "failed restart: reports rc 1"    "grep -q 'exited 1' $EVID/mail"
 
 echo "--- 15. undelivered cap alert is retried, restart stays barred ---"
