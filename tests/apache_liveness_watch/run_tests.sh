@@ -171,7 +171,6 @@ assert "mail failed: logged"             "grep -q 'sendmail failed' $EVID/logger
 echo "--- 13. malformed state files read as zero, not as a crash ---"
 setup 000 28 200 0
 printf 'abc2def' > $STATE/fail_a
-printf '08\n'    > $STATE/fail_b
 printf '%s junk\nnot-a-number\n' "$(date -d '30 seconds ago' +%s)" > $STATE/restarts
 RC=$(run)
 assert "malformed: exit 0"               "[ $RC -eq 0 ]"
@@ -181,6 +180,30 @@ echo 2 > $STATE/fail_a
 run > /dev/null
 assert "malformed restarts: cooldown won" "[ ! -f $EVID/systemctl ]"
 assert "malformed restarts: pruned clean" "! grep -q junk $STATE/restarts"
+# A leading zero is the one malformed-looking value a counter can legitimately
+# hold, and it must be read as decimal 8, not rejected and not octal-errored.
+# Probe A must PASS here, or the probe-B counter is never read at all.
+setup 301 0 500 0
+printf '08\n' > $STATE/fail_b
+run > /dev/null
+assert "leading zero read as decimal 8" "[ \$(cat $STATE/fail_b) -eq 9 ]"
+
+echo "--- 13b. a wedge clears stale probe-B state ---"
+setup 000 28 200 0
+echo 4 > $STATE/fail_b; : > $STATE/b_alerted
+run > /dev/null
+assert "wedge clears fail_b"             "[ ! -f $STATE/fail_b ]"
+assert "wedge clears b_alerted"          "[ ! -f $STATE/b_alerted ]"
+
+echo "--- 13c. a skipped run says so in syslog ---"
+setup 301 0 200 0
+: > $STATE/lock
+flock -x $STATE/lock -c 'sleep 3' &
+LKPID=$!
+sleep 1
+run > /dev/null
+assert "skipped run is logged"           "grep -q 'still holding the lock' $EVID/logger"
+wait $LKPID
 
 echo "--- 14. failed restart still counts, and says so ---"
 setup 000 28 200 0

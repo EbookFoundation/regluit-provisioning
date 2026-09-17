@@ -72,7 +72,13 @@ mkdir -p "$STATE" || exit 0         # a reboot has already restarted apache2
 # Single instance, held for the whole run INCLUDING the restart: a hung
 # `systemctl restart` must not let the next minute's cron start a second one.
 exec 9>"$STATE/lock" || exit 0
-flock -n 9 || exit 0
+flock -n 9 || {
+    # Say so. Silence here is indistinguishable from a watchdog that is working,
+    # and the previous run holding the lock is most likely stuck in the restart
+    # below — exactly when someone reading syslog needs to know why no probe ran.
+    logger -t apache_liveness "previous run still holding the lock; skipping this minute"
+    exit 0
+}
 
 # A counter file holds one small decimal number. Anything that is not exactly
 # that — a truncated write, a stray editor, a file that was never ours — reads
@@ -193,6 +199,12 @@ also returns 503 when it cannot reach the daemon process.)"
 fi
 
 # ---- probe A failed ----
+# Drop any probe-B state: B did not run this minute, and B's counter means
+# "N consecutive minutes". Without this, four slow-app timeouts before a wedge
+# plus one cold-start timeout after the restart would add up to a "5 consecutive
+# probes" alert saying NO RESTART WAS PERFORMED — sent a minute after this
+# watchdog restarted apache2 itself, spanning ~9 minutes rather than 5.
+rm -f "$STATE/fail_b" "$STATE/b_alerted"
 FAILS=$(( $(read_int "$STATE/fail_a") + 1 ))
 echo "$FAILS" > "$STATE/fail_a"
 logger -t apache_liveness "probe A failed (rc=${A_RC} code=${A_CODE}); consecutive=${FAILS}/${A_THRESHOLD}"
@@ -227,7 +239,14 @@ if [ ! -f "$STATE/capped" ]; then
         logger -t apache_liveness "wedged after ${FAILS} consecutive failed probes; restarting apache2"
         EV=$(evidence)                            # the WEDGED state, captured before the bounce
         printf '%s\n' "$EV" | logger -t apache_liveness   # trail survives even if mail does not
-        systemctl restart apache2
+        # Bounded: apache2.service stops with `apachectl graceful-stop`, which
+        # waits for in-flight workers — under the very saturation this fires in,
+        # that can run to systemd's 90s stop timeout. The lock is held across it,
+        # so an unbounded hang would silently kill the watchdog for good, and the
+        # cap escalation would never be sent. 120s > systemd's 90s, so a normal
+        # slow stop still completes; exit 124 means the timeout won and is
+        # reported as a failed restart.
+        timeout 120 systemctl restart apache2
         RESTART_RC=$?
         logger -t apache_liveness "systemctl restart apache2 exited ${RESTART_RC}"
         BODY="${HOST} stopped answering http://127.0.0.1/ — the port-80 redirect, which
@@ -246,8 +265,9 @@ crawler holding workers on /socialauth/login/google-oauth2/, which makes an
 outbound call per request. A restart does not address it. See
 EbookFoundation/security-private#32.
 
-Next restart no sooner than ${COOLDOWN}s from now; at most ${CAP} per hour, after
-which the watchdog stops and escalates instead."
+Next restart no sooner than ${COOLDOWN}s from now; at most ${CAP} per hour. Once
+the budget is spent the watchdog stops restarting and mails an escalation — but
+the cooldown is checked first, so that mail can be up to ${COOLDOWN}s late."
         if [ "$RESTART_RC" -eq 0 ]; then
             SUBJ="[unglue.it] apache restarted by liveness watchdog on ${HOST}"
         else
