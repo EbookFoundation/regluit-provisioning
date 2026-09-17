@@ -12,6 +12,10 @@ celerybeat_enabled: true
 # Schedule mem_alert.sh and wsgi_wedge_watch.sh, which send mail through the
 # local sendmail. The scripts are installed either way; false leaves their
 # cron entries in place but commented out.
+# Note what else false costs: wsgi_wedge_watch.sh does not only alert, it also
+# kills wedged mod_wsgi daemon processes so they respawn (regluit#1204). Off
+# means no auto-heal either, which is acceptable on a staging box and is not
+# something to turn off on a host that serves users.
 monitoring_alerts_enabled: true
 
 # Turn on the app's non-production email safety net (regluit#1238,
