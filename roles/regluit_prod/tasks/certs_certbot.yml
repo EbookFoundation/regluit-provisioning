@@ -21,6 +21,17 @@
     mode: "0755"
   tags: [certs]
 
+# The certbot package does not create this; certbot itself does on first run.
+- name: Create the certbot deploy-hook directory
+  become: yes
+  file:
+    path: /etc/letsencrypt/renewal-hooks/deploy
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [certs]
+
 # Without this, certbot renews the files and apache keeps serving the old
 # certificate until someone reloads it by hand (2026-08-18 incident).
 - name: Install certbot deploy hook that reloads apache
