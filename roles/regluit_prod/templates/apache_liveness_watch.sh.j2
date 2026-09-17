@@ -87,6 +87,18 @@ read_int() {
     esac
 }
 
+# Fail SAFE, not loud, if the probe tool itself is missing: without this, curl's
+# exit 127 would read as three consecutive failures and the watchdog would
+# restart a perfectly healthy Apache every 15 minutes until the cap latched.
+# (curl is present on production — checked 2026-09-17 — but a from-scratch build
+# is exactly the case this repo is being made to handle.) flock, ss and sendmail
+# already fail safe: a missing flock exits at the lock, a missing ss just leaves
+# the queues out of the evidence, and a failed sendmail is logged and retried.
+if ! command -v curl >/dev/null 2>&1; then
+    logger -t apache_liveness "curl not found; liveness watchdog cannot probe and is doing nothing"
+    exit 0
+fi
+
 # ---- probe A: does Apache produce any HTTP status at all? ----
 # curl exits 0 when the transfer completed, whatever the status. We treat a
 # non-zero exit as a failed probe even if a status code did arrive (curl can

@@ -220,5 +220,16 @@ assert "locked: probe never ran"         "[ ! -f $EVID/curl_calls ]"
 assert "locked: no state written"        "[ ! -f $STATE/fail_a ]"
 wait $LOCKPID
 
+echo "--- 18. a missing curl does nothing, rather than restarting a healthy apache ---"
+setup 000 28 200 0
+echo 2 > $STATE/fail_a
+mv mockbin/curl mockbin/curl.hidden
+command -v curl >/dev/null && { echo "SKIP: real curl present in image"; exit 1; }
+run > /dev/null
+assert "no curl: no restart"             "[ ! -f $EVID/systemctl ]"
+assert "no curl: counter untouched"      "[ \$(cat $STATE/fail_a) -eq 2 ]"
+assert "no curl: logged"                 "grep -q 'curl not found' $EVID/logger"
+mv mockbin/curl.hidden mockbin/curl
+
 echo; echo "RESULTS: $pass passed, $fail failed"
 [ $fail -eq 0 ]
