@@ -51,8 +51,9 @@
 # for its own port-80 redirect once a minute and restarts apache2 after three
 # consecutive failures, with a cooldown and an hourly cap.
 #
-# On-box triage: it shortens an outage, it does not prevent one, and it is not a
-# substitute for filtering the crawl upstream.
+# On-box triage: it attempts to shorten an outage (it never verifies that the site
+# recovered), it does not prevent one, and it is not a substitute for stopping the
+# traffic that causes one.
 
 - name: Install apache liveness watchdog script
   become: yes

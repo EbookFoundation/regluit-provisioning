@@ -101,6 +101,11 @@ assert "3rd failure: apache restarted"   "grep -q 'SYSTEMCTL restart apache2' $E
 assert "3rd failure: mail sent"          "grep -q 'Subject: .*apache restarted by liveness watchdog' $EVID/mail"
 assert "mail shows PRE-restart evidence" "grep -q 'consecutive failures=3' $EVID/mail"
 assert "mail names the exit code"        "grep -q 'exited 0' $EVID/mail"
+# Guard against command substitution smuggled into a mail body: the only
+# systemctl the script may ever run is its own restart, and prose naming other
+# commands must reach the reader verbatim.
+assert "systemctl called exactly once"   "[ \$(wc -l < $EVID/systemctl) -eq 1 ]"
+assert "prose commands are literal"      "grep -q \"a deliberate 'systemctl stop' or a passing overload\" $EVID/mail"
 assert "evidence: listen queues"         "grep -q '\*:443' $EVID/mail"
 assert "evidence: apache error log tail" "grep -q 'AH00484' $EVID/mail"
 assert "evidence also went to syslog"    "grep -q 'AH00484' $EVID/logger"

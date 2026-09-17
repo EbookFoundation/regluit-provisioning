@@ -12,8 +12,9 @@
 # watches a different failure (a mod_wsgi daemon whose Python failed to load)
 # and correctly found nothing.
 #
-# This is ON-BOX TRIAGE. It shortens an outage; it does not prevent one, and it
-# is not a substitute for filtering the crawl upstream.
+# This is ON-BOX TRIAGE. It ATTEMPTS to shorten an outage — it never checks that
+# the site recovered, and a restart attempt can fail. It does not prevent an
+# outage, and it is not a substitute for stopping the traffic that causes one.
 #
 # Two probes, deliberately different consequences:
 #
@@ -281,7 +282,7 @@ one thing that has worked before; it does not check whether the site recovered,
 and it does not touch whatever caused this. A saturated worker pool is the
 likeliest cause — on 2026-09-17 that was a crawler holding workers on
 /socialauth/login/google-oauth2/, which makes an outbound call per request — but
-a deliberate `systemctl stop` or a passing overload reaches this branch too. A
+a deliberate 'systemctl stop' or a passing overload reaches this branch too. A
 restart addresses none of them. See EbookFoundation/security-private#32.
 
 Next restart no sooner than ${COOLDOWN}s after the attempt recorded above — that
