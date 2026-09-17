@@ -1,15 +1,22 @@
 ---
-# Certificate checks that MUST run before tasks/apache.yml rewrites
-# /etc/apache2/sites-available/prod.conf.
+# Certificate checks that MUST run before the "Create apache config" task in
+# tasks/apache.yml rewrites /etc/apache2/sites-available/prod.conf.
 #
 # Why the ordering matters: apache.conf.j2's port-80 vhost aliases
 # /.well-known/acme-challenge to certbot_webroot when certbot_manage is on, and
 # an Alias shadows the document root for that path. If a host's stored renewal
-# settings point somewhere else, that Alias breaks unattended renewal. Asserting
-# it from tasks/certs.yml (which runs AFTER apache.yml) would fail the play with
-# the incompatible config already written to disk, where the next deploy.yml
-# restart would activate it. So these run first, and a failure leaves the
-# host's apache config untouched. (Codex review round 3 on #78.)
+# settings point somewhere else, that Alias breaks unattended renewal. Checking
+# from tasks/certs.yml (which runs AFTER apache.yml) would fail the play with
+# the incompatible config already written to disk, where the next restart --
+# from a handler or from deploy.yml -- would activate it.
+#
+# This file is imported from tasks/apache.yml immediately before that render,
+# so it cannot be skipped by a tag that selects the render. Do not move it back
+# into main.yml: as a separate import it has to repeat the render's tag list,
+# and it already drifted once (--tags oom-hardening selected the render and not
+# the check). Codex review rounds 3 and 4 on #78.
+#
+# Everything here is read-only and makes no network call.
 
 - name: manage_certs and certbot_manage are mutually exclusive
   ansible.builtin.assert:
@@ -20,7 +27,6 @@
       A host uses at most one certificate flow; a certbot host needs
       manage_certs: false (see group_vars/test).
     success_msg: "One certificate flow at most, as required."
-  tags: [certs, apache-config]
 
 - name: Check whether this host already has a certificate
   become: yes
@@ -28,11 +34,9 @@
     path: "/etc/letsencrypt/live/{{ server_name }}/fullchain.pem"
   register: certbot_precheck_cert
   when: certbot_manage | default(false) | bool
-  tags: [certs, apache-config]
 
-# Read-only, no network. A host with no certificate yet has nothing to
-# reconcile: the issuance task in certs_certbot.yml will write the renewal
-# config itself, from certbot_webroot.
+# A host with no certificate yet has nothing to reconcile: the issuance task in
+# certs_certbot.yml writes the renewal config itself, from certbot_webroot.
 - name: Read the stored renewal settings
   become: yes
   slurp:
@@ -42,29 +46,37 @@
   when:
     - certbot_manage | default(false) | bool
     - certbot_precheck_cert.stat.exists | default(false)
-  tags: [certs, apache-config]
 
 # The effective webroot for a domain is webroot_map[domain] if the config maps
 # it, and otherwise the LAST entry of webroot_path -- certbot's webroot plugin
 # gives the per-hostname mapping precedence, so checking webroot_path alone
-# would accept a config whose map sends our domain somewhere else. Comments
-# cannot satisfy these patterns: each is anchored on `<key> = ` at line start.
+# would accept a config whose map sends our domain somewhere else.
+#
+# certbot stores these with ConfigObj, so a value can carry an inline comment
+# (`test.unglue.it = /old/root # was`), can be quoted, and can contain spaces.
+# renewal_clean normalises all three before anything is matched, because a
+# mapping this file fails to parse looks like a mapping that is not there --
+# which would fall through to the webroot_path branch and wrongly pass.
 - name: The stored renewal settings must match the webroot the vhost serves
   vars:
-    renewal_text: "{{ certbot_renewal_conf.content | default('') | b64decode }}"
-    # `webroot_path = /a,/b,` -> last non-empty element
+    renewal_raw: "{{ certbot_renewal_conf.content | default('') | b64decode }}"
+    # 1. drop inline comments  2. drop a trailing comma  3. unquote the value
+    renewal_clean: >-
+      {{ renewal_raw
+         | regex_replace('[ \t]+#[^\n]*$', '', multiline=True)
+         | regex_replace(',[ \t]*$', '', multiline=True)
+         | regex_replace('=[ \t]*([\'"])(.*)\1[ \t]*$', '= \2', multiline=True) }}
     webroot_path_list: >-
-      {{ (renewal_text | regex_search('^\s*webroot_path\s*=\s*(.*?)\s*$', '\1', multiline=True)
+      {{ (renewal_clean | regex_search('^[ \t]*webroot_path[ \t]*=[ \t]*(.*?)[ \t]*$', '\1', multiline=True)
           | default([], true) | first | default(''))
          | split(',') | map('trim') | reject('equalto', '') | list }}
     webroot_path_effective: "{{ webroot_path_list | last | default('') }}"
-    # Every `<domain> = <path>` mapping the config carries, as a dict. Only
-    # dotted names are taken, which is what separates a hostname from a
-    # renewal parameter (authenticator, webroot_path, key_type, ... have no
-    # dots) without having to keep a list of certbot's keys in step.
+    # Only dotted names are taken as hostnames, which is what separates a
+    # domain from a renewal parameter (authenticator, webroot_path, key_type,
+    # ... have no dots) without keeping a list of certbot's keys in step.
     webroot_map: >-
-      {{ dict(renewal_text
-              | regex_findall('^\s*([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\s*=\s*(\S+?),?\s*$', multiline=True)) }}
+      {{ dict(renewal_clean
+              | regex_findall('^[ \t]*([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)[ \t]*=[ \t]*(.+?)[ \t]*$', multiline=True)) }}
     expected_domains: >-
       {{ [server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []) }}
     mapped_elsewhere: >-
@@ -74,7 +86,7 @@
   ansible.builtin.assert:
     that:
       - certbot_renewal_conf.content is defined
-      - renewal_text | regex_search('^\s*authenticator\s*=\s*webroot\s*$', multiline=True)
+      - renewal_clean | regex_search('^[ \t]*authenticator[ \t]*=[ \t]*webroot[ \t]*$', multiline=True)
       # a hostname mapping wins over webroot_path, so it has to point at us
       - mapped_elsewhere | length == 0
       # and any domain the map does not cover falls back to webroot_path
@@ -85,7 +97,7 @@
       use the webroot authenticator, or does not resolve every one of
       {{ expected_domains | join(', ') }} to {{ certbot_webroot }} -- the only
       path the port-80 vhost serves ACME challenges from.
-      Hostname mappings found: {{ webroot_map | default({}) }};
+      Hostname mappings found: {{ webroot_map }};
       webroot_path falls back to '{{ webroot_path_effective }}'.
       Unattended renewal would fail silently, so this stops before apache's
       config is rewritten. Reconcile it on the host with certbot's own command
@@ -100,4 +112,56 @@
   when:
     - certbot_manage | default(false) | bool
     - certbot_precheck_cert.stat.exists | default(false)
-  tags: [certs, apache-config]
+
+# Resolving the webroot says renewal will work; it says nothing about which
+# names the certificate actually covers. Issuance in certs_certbot.yml is
+# skipped whenever the lineage exists, so adding alt_server_name to a host that
+# already has a single-name certificate would leave the alt hostname served by
+# a certificate that does not include it -- and renewal preserves the existing
+# names, so it never self-corrects. Read the names and check them.
+# (Codex review round 4 on #78.)
+- name: Read the names on the installed certificate
+  become: yes
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - x509
+      - -in
+      - "/etc/letsencrypt/live/{{ server_name }}/fullchain.pem"
+      - -noout
+      - -ext
+      - subjectAltName
+  register: certbot_cert_sans
+  changed_when: false
+  failed_when: false
+  when:
+    - certbot_manage | default(false) | bool
+    - certbot_precheck_cert.stat.exists | default(false)
+
+- name: The installed certificate must cover every name the vhost serves
+  vars:
+    cert_names: >-
+      {{ certbot_cert_sans.stdout | default('')
+         | regex_findall('DNS:([A-Za-z0-9.*-]+)') | map('lower') | list }}
+    expected_domains: >-
+      {{ [server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []) }}
+    uncovered_domains: "{{ expected_domains | map('lower') | reject('in', cert_names) | list }}"
+  ansible.builtin.assert:
+    that:
+      - certbot_cert_sans.rc | default(1) == 0
+      - uncovered_domains | length == 0
+    fail_msg: >-
+      The certificate at /etc/letsencrypt/live/{{ server_name }}/ does not
+      cover {{ uncovered_domains | join(', ') | default('(names unreadable)', true) }}.
+      It covers: {{ cert_names | join(', ') | default('(unreadable)', true) }}.
+      Because the lineage already exists, the issuance task will be skipped, so
+      the uncovered name would be served a certificate that does not include it
+      and renewal would never add it. Expand the certificate on the host first:
+      certbot certonly --non-interactive --webroot -w {{ certbot_webroot }}
+      --cert-name {{ server_name }} --expand
+      {{ expected_domains | map('regex_replace', '^', '-d ') | join(' ') }}
+    success_msg: >-
+      Certificate covers {{ expected_domains | join(', ') }}.
+  when:
+    - certbot_manage | default(false) | bool
+    - certbot_precheck_cert.stat.exists | default(false)

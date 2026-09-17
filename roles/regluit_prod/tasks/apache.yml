@@ -12,6 +12,17 @@
     state: started
     enabled: yes
 
+# Runs immediately before the render below, and carries the SAME tag list, so
+# no tagged run can rewrite prod.conf without the check. If you add a tag to
+# "Create apache config", add it here too. See certs_precheck.yml for why the
+# check has to come first.
+- name: Certificate pre-checks (must precede the apache config render)
+  import_tasks: certs_precheck.yml
+  # The first two are the render's own tags, so no tagged run can rewrite
+  # prod.conf without the check. `certs` is here so a --tags certs run gets it
+  # as well, before certs_certbot.yml touches the certificate.
+  tags: [apache-config, oom-hardening, certs]
+
 - name: Create apache config
   become: yes
   tags: [apache-config, oom-hardening]

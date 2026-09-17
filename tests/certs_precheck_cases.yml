@@ -108,21 +108,89 @@
           [renewalparams]
           authenticator = webroot
           webroot_path = /var/lib/letsencrypt-old,
+      # ConfigObj supports inline comments, quoting and spaces in values. A
+      # mapping this check fails to PARSE looks like a mapping that is not
+      # there, which would fall through to webroot_path and wrongly pass.
+      - name: "BAD - hostname map wrong, hidden behind an inline comment"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        expect_ok: false
+        text: |
+          [renewalparams]
+          authenticator = webroot
+          webroot_path = /var/lib/letsencrypt,
+          [[webroot_map]]
+          test.unglue.it = /var/www/html # old webroot
+      - name: "BAD - hostname map wrong and quoted"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        expect_ok: false
+        text: |
+          [renewalparams]
+          authenticator = webroot
+          webroot_path = /var/lib/letsencrypt,
+          [[webroot_map]]
+          test.unglue.it = "/var/www/html"
+      - name: "BAD - hostname map wrong and contains a space"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        expect_ok: false
+        text: |
+          [renewalparams]
+          authenticator = webroot
+          webroot_path = /var/lib/letsencrypt,
+          [[webroot_map]]
+          test.unglue.it = /var/www/old html
+      - name: "good - right map, with an inline comment after it"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        expect_ok: true
+        text: |
+          [renewalparams]
+          authenticator = webroot
+          webroot_path = /var/www/html,
+          [[webroot_map]]
+          test.unglue.it = /var/lib/letsencrypt # moved 2026-08-18
+      - name: "good - right map, quoted"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        expect_ok: true
+        text: |
+          [renewalparams]
+          authenticator = webroot
+          webroot_path = /var/www/html,
+          [[webroot_map]]
+          test.unglue.it = '/var/lib/letsencrypt'
+      - name: "BAD - authenticator webroot hidden behind an inline comment"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        expect_ok: false
+        text: |
+          [renewalparams]
+          authenticator = apache # was webroot
+          webroot_path = /var/lib/letsencrypt,
 
   tasks:
     - name: Evaluate each case with the production expressions
       vars:
-        renewal_text: "{{ item.text }}"
+        # Kept character-for-character in step with the expressions in
+        # roles/regluit_prod/tasks/certs_precheck.yml.
+        renewal_raw: "{{ item.text }}"
         server_name: "{{ item.server_name }}"
         alt_server_name: "{{ item.alt_server_name }}"
+        renewal_clean: >-
+          {{ renewal_raw
+             | regex_replace('[ \t]+#[^\n]*$', '', multiline=True)
+             | regex_replace(',[ \t]*$', '', multiline=True)
+             | regex_replace('=[ \t]*([\'"])(.*)\1[ \t]*$', '= \2', multiline=True) }}
         webroot_path_list: >-
-          {{ (renewal_text | regex_search('^\s*webroot_path\s*=\s*(.*?)\s*$', '\1', multiline=True)
+          {{ (renewal_clean | regex_search('^[ \t]*webroot_path[ \t]*=[ \t]*(.*?)[ \t]*$', '\1', multiline=True)
               | default([], true) | first | default(''))
              | split(',') | map('trim') | reject('equalto', '') | list }}
         webroot_path_effective: "{{ webroot_path_list | last | default('') }}"
         webroot_map: >-
-          {{ dict(renewal_text
-                  | regex_findall('^\s*([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\s*=\s*(\S+?),?\s*$', multiline=True)) }}
+          {{ dict(renewal_clean
+                  | regex_findall('^[ \t]*([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)[ \t]*=[ \t]*(.+?)[ \t]*$', multiline=True)) }}
         expected_domains: >-
           {{ [server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []) }}
         mapped_elsewhere: >-
@@ -130,7 +198,7 @@
              | reject('equalto', certbot_webroot) | list }}
         unmapped_domains: "{{ expected_domains | reject('in', webroot_map) | list }}"
         verdict: >-
-          {{ (renewal_text | regex_search('^\s*authenticator\s*=\s*webroot\s*$', multiline=True) | ternary(true, false))
+          {{ (renewal_clean | regex_search('^[ \t]*authenticator[ \t]*=[ \t]*webroot[ \t]*$', multiline=True) | ternary(true, false))
              and (mapped_elsewhere | length == 0)
              and ((unmapped_domains | length == 0) or (webroot_path_effective == certbot_webroot)) }}
       ansible.builtin.assert:
