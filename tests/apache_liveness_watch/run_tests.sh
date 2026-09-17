@@ -188,16 +188,27 @@ printf '08\n' > $STATE/fail_b
 run > /dev/null
 assert "leading zero read as decimal 8" "[ \$(cat $STATE/fail_b) -eq 9 ]"
 
-echo "--- 13b. probe-B state survives an A blip, clears at a declared wedge ---"
+echo "--- 13b. probe-B state is discarded only by an actual restart ---"
 setup 000 28 200 0
 echo 4 > $STATE/fail_b; : > $STATE/b_alerted
 run > /dev/null
 assert "A blip keeps fail_b"             "[ \$(cat $STATE/fail_b) -eq 4 ]"
 assert "A blip keeps b_alerted"          "[ -f $STATE/b_alerted ]"
-echo 2 > $STATE/fail_a
+# Wedged but forbidden to restart: nothing disturbed the app, so its evidence
+# must survive — otherwise repeated wedges during cooldown hide a real outage.
+echo 9 > $STATE/fail_a; date -d '100 seconds ago' +%s > $STATE/restarts
 run > /dev/null
-assert "wedge clears fail_b"             "[ ! -f $STATE/fail_b ]"
-assert "wedge clears b_alerted"          "[ ! -f $STATE/b_alerted ]"
+assert "cooldown keeps fail_b"           "[ \$(cat $STATE/fail_b) -eq 4 ]"
+echo 9 > $STATE/fail_a
+for s in 1000 2000 3000; do date -d "$s seconds ago" +%s >> $STATE/restarts; done
+run > /dev/null
+assert "cap keeps fail_b"                "[ \$(cat $STATE/fail_b) -eq 4 ]"
+# An actual restart does break probe B's run of consecutive observations.
+setup 000 28 200 0
+echo 4 > $STATE/fail_b; : > $STATE/b_alerted; echo 2 > $STATE/fail_a
+run > /dev/null
+assert "restart clears fail_b"           "[ ! -f $STATE/fail_b ]"
+assert "restart clears b_alerted"        "[ ! -f $STATE/b_alerted ]"
 
 echo "--- 13c. a skipped run says so in syslog ---"
 setup 301 0 200 0

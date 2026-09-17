@@ -69,8 +69,11 @@ HOST=$(hostname)
 STATE=/run/apache_liveness          # tmpfs: cleared on reboot, which is correct —
 mkdir -p "$STATE" || exit 0         # a reboot has already restarted apache2
 
-# Single instance, held for the whole run INCLUDING the restart: a hung
-# `systemctl restart` must not let the next minute's cron start a second one.
+# Single instance for this invocation's lifetime, which covers the restart
+# command below, so a slow `systemctl restart` cannot let the next minute's cron
+# start a second one. Note the limit: that command is bounded at 120s, and once
+# it is killed the lock is released even though systemd's restart job may still
+# be running.
 exec 9>"$STATE/lock" || exit 0
 flock -n 9 || {
     # Say so. Silence here is indistinguishable from a watchdog that is working,
@@ -183,9 +186,10 @@ if [ "$A_OK" -eq 1 ]; then
     EV=$(evidence)
     BODY="Apache is answering on this box, but the application is not:
 https://${SERVER_NAME}/ returned rc=${B_RC} code=${B_CODE} on ${BFAILS} consecutive
-probes from ${HOST} itself (${B_TIMEOUT}s timeout). Probe B runs once a minute,
-but only in a minute when Apache itself answered, so those ${BFAILS} probes span
-at least ${BFAILS} minutes and may span more.
+OBSERVED probes from ${HOST} itself (${B_TIMEOUT}s timeout). Probe B runs about
+once a minute, but only in a minute when Apache itself answered and no run was
+skipped, so skipped runs stretch the interval. This is a count of probes, not a
+measured outage duration.
 
 NO RESTART WAS PERFORMED, and none will be: Apache is serving, so a restart is
 not the indicated fix for a Django or database failure. Look at the app.
@@ -206,15 +210,6 @@ echo "$FAILS" > "$STATE/fail_a"
 logger -t apache_liveness "probe A failed (rc=${A_RC} code=${A_CODE}); consecutive=${FAILS}/${A_THRESHOLD}"
 [ "$FAILS" -ge "$A_THRESHOLD" ] || exit 0
 
-# A declared wedge invalidates probe B's counter, which means "N consecutive
-# observed probes" — and during a wedge B is not observed at all. Without this,
-# four slow-app timeouts before a wedge plus one cold-start timeout after the
-# restart would add up to a "5 consecutive probes" alert saying NO RESTART WAS
-# PERFORMED, sent a minute after this watchdog restarted apache2 itself.
-# Cleared HERE, at the threshold, and not on every single A failure: an isolated
-# A blip every few minutes would otherwise reset B forever, and a genuinely
-# unavailable application would never be reported at all.
-rm -f "$STATE/fail_b" "$STATE/b_alerted"
 
 # Once the cap has latched, the restart prohibition stays until A recovers, so
 # the wedged server is left intact for a human to examine. The per-minute probe
@@ -242,6 +237,18 @@ if [ ! -f "$STATE/capped" ]; then
         logger -t apache_liveness "wedged, restart cap (${CAP}/hour) reached; NOT restarting — escalating"
     else
         echo "$NOW" >> "$STATE/restarts"
+        # Probe B's counter means "N consecutive observed probes", and a restart
+        # breaks that run: B was not observed during the wedge, and the first
+        # probe afterwards samples a cold-starting Django. Without this, four
+        # slow-app timeouts before the wedge plus one cold-start timeout after it
+        # would add up to an "app not answering ... NO RESTART WAS PERFORMED"
+        # mail sent one minute after this watchdog restarted apache2 itself.
+        # Cleared ONLY here, where a restart is actually attempted — not on every
+        # A failure and not when the cooldown or the cap forbids restarting,
+        # because in those cases nothing has disturbed the application and
+        # discarding the evidence would hide a real outage. (An A timeout every
+        # few minutes would otherwise reset B forever.)
+        rm -f "$STATE/fail_b" "$STATE/b_alerted"
         logger -t apache_liveness "wedged after ${FAILS} consecutive failed probes; restarting apache2"
         EV=$(evidence)                            # the WEDGED state, captured before the bounce
         printf '%s\n' "$EV" | logger -t apache_liveness   # trail survives even if mail does not
