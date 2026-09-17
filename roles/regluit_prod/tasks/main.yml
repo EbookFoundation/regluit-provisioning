@@ -172,6 +172,11 @@
   import_tasks: monitoring.yml
   tags: [monitoring, oom-hardening]
 
+- name: Run crawler rate-limiting tasks (fail2ban)
+  import_tasks: rate_limiting.yml
+  tags: [rate-limiting, monitoring]
+  when: deploy_type | default('') == 'prod'
+
 - name: Run log management tasks
   import_tasks: log_management.yml
 

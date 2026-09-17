@@ -1,0 +1,24 @@
+# Crawlers that regluit's own robots.txt tells to go away entirely, and which
+# came anyway. This list is NOT a new policy: it mirrors, exactly, the
+# `Disallow: /` group in regluit's frontend/templates/robots.txt as of
+# 2026-09-17. If that list changes, change this one — they live in two repos and
+# nothing enforces the correspondence.
+#
+# Deliberately NOT here, because robots.txt deliberately allows them:
+# Googlebot, PerplexityBot, Amzn-SearchBot, OAI-SearchBot, Claude-SearchBot,
+# Claude-User, ChatGPT-User, Perplexity-User, Amzn-User, ClaudeBot,
+# meta-webindexer. Note that ChatGPT-User does not contain "GPTBot",
+# Amzn-SearchBot does not contain "Amazonbot", and meta-webindexer does not
+# contain "meta-externalagent" — but the test asserts all of that rather than
+# trusting it.
+#
+# The name must appear in the user agent, which is the last field on the line,
+# and the trailing "$ is what pins it there: a bot name in a URL cannot match.
+# A user agent containing an escaped quote would evade this; no crawler here
+# does that, and one willing to would simply drop the name instead.
+#
+# Managed by Ansible (regluit_prod). EbookFoundation/security-private#32.
+[Definition]
+badbots = GPTBot|CCBot|Bytespider|Amazonbot|meta-externalagent|Diffbot
+failregex = ^<HOST> \[.*"[^"]*(?:%(badbots)s)/[^"]*"$
+ignoreregex =

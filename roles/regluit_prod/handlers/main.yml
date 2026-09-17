@@ -37,3 +37,9 @@
   ansible.builtin.service:
     name: celerybeat
     state: restarted
+
+- name: restart fail2ban
+  become: yes
+  ansible.builtin.service:
+    name: fail2ban
+    state: restarted
