@@ -264,7 +264,7 @@ if [ ! -f "$STATE/capped" ]; then
         # while it is. So 124 is reported as "outcome unknown", not as a failure.
         timeout 120 systemctl restart apache2
         RESTART_RC=$?
-        logger -t apache_liveness "systemctl restart apache2 exited ${RESTART_RC}"
+        logger -t apache_liveness "restart attempt exited ${RESTART_RC} (124 = stopped waiting after 120s; systemd may still be working)"
         BODY="${HOST} stopped answering http://127.0.0.1/ — the port-80 redirect, which
 needs no TLS, no Django and no database — on ${FAILS} consecutive probes
 (one per minute, ${A_TIMEOUT}s timeout). A restart was attempted:
