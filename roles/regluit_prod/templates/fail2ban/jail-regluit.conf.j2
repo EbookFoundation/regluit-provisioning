@@ -49,8 +49,14 @@ sendername = fail2ban
 # how hard the site is being hit. sendmail (not mail-whois) because `whois` is
 # not installed on this box and the whois-flavoured actions would mail you a
 # "command not found" instead of a report.
+#
+# actionstart and actionstop are emptied on purpose. Left at their defaults,
+# action.d/sendmail-common.conf mails on every jail start and stop, which is
+# SIX messages per fail2ban restart with zero bans — measured. Every ansible run
+# that touches a filter or a jail, every reboot and every manual restart would
+# send them, and they would dilute the one thing the ban mails are for.
 action    = %(action_)s
-            sendmail[sender="%(sender)s", dest="%(destemail)s", sendername="%(sendername)s"]
+            sendmail[sender="%(sender)s", dest="%(destemail)s", sendername="%(sendername)s", actionstart="", actionstop=""]
 {% else %}
 action    = %(action_)s
 {% endif %}

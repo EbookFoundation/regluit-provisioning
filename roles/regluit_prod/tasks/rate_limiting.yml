@@ -34,11 +34,14 @@
     owner: root
     group: root
     mode: "0644"
-  notify: restart fail2ban
+  notify:
+    - restart fail2ban
+    - verify fail2ban jails
 
-# Filters before jails: a jail whose filter is not on disk fails to start, and
-# fail2ban carries on with the OTHER jails — running, and watching less than you
-# think.
+# Filters before jails. A jail that cannot be configured does not fail quietly
+# and alone: fail2ban refuses the whole configuration and the SERVER never comes
+# up — no socket, no jails at all. Ordering keeps the filters ahead of the jails
+# that name them.
 - name: Install regluit fail2ban filters
   become: yes
   ansible.builtin.template:
@@ -51,7 +54,9 @@
     - regluit-flood
     - regluit-expensive
     - regluit-badbot
-  notify: restart fail2ban
+  notify:
+    - restart fail2ban
+    - verify fail2ban jails
 
 # jail.d files load in alphabetical order and later files win, which is what
 # makes the [sshd] override inside this one effective against Debian's
@@ -64,15 +69,46 @@
     owner: root
     group: root
     mode: "0644"
-  notify: restart fail2ban
+  notify:
+    - restart fail2ban
+    - verify fail2ban jails
 
-# The rate-limiting log comes into existence when apache restarts under the new
-# config. Without this flush, a run that changes apache.conf would start fail2ban
-# BEFORE the restart handler fires; the file might not exist yet, and each jail
-# would fail to start while fail2ban itself came up green. The verification task
-# at the end of this file is what catches that if it happens anyway.
-- name: Restart apache now if its config changed, so the rate-limiting log exists
-  ansible.builtin.meta: flush_handlers
+# THE LOG FILE MUST EXIST BEFORE FAIL2BAN STARTS, AND ITS ABSENCE IS NOT A SMALL
+# PROBLEM. fail2ban refuses to configure a jail whose logpath is missing, and
+# that refusal takes down the entire server rather than the one jail — measured
+# against the real 1.0.2 package: "Have not found any log file for regluit-flood
+# jail", async configuration failed, no socket. So production would be left with
+# NO fail2ban rather than a partial one.
+#
+# Apache creates this file when it starts under the new config, but relying on
+# that couples the jails to apache's restart order, and to an operator never
+# sweeping /var/log/apache2 by hand under disk pressure — which has happened here
+# before (Gluejar/regluit#1111). Creating it here makes the jails startable on
+# their own; the tmpfiles.d entry makes that true across a reboot as well, where
+# apache2 and fail2ban have no ordering relationship between them.
+- name: Ensure the rate-limiting log exists before any jail names it
+  become: yes
+  ansible.builtin.file:
+    path: /var/log/apache2/ratelimit_access
+    state: touch
+    owner: root
+    group: adm
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+
+- name: Recreate the rate-limiting log at boot, before fail2ban reads it
+  become: yes
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (regluit_prod). EbookFoundation/security-private#32.
+      # fail2ban will not start at all if this file is missing, and nothing
+      # orders apache2 ahead of fail2ban at boot.
+      f /var/log/apache2/ratelimit_access 0640 root adm -
+    dest: /etc/tmpfiles.d/regluit-ratelimit.conf
+    owner: root
+    group: root
+    mode: "0644"
 
 # ratelimit_access is scratch: the record of what happened is the dated archive
 # log, which the existing cleanup crons manage. Hourly rather than daily so the
@@ -97,15 +133,8 @@
     state: started
     enabled: yes
 
-# The failure this guards against is the quiet one: fail2ban running, the
-# service green, and a jail that never started because its log file was missing
-# or its filter did not parse. Ask fail2ban which jails it is actually running.
-- name: Verify all three jails actually started
-  become: yes
-  ansible.builtin.command: fail2ban-client status
-  register: f2b_status
-  changed_when: false
-  failed_when: >
-    'regluit-flood' not in f2b_status.stdout or
-    'regluit-expensive' not in f2b_status.stdout or
-    'regluit-badbot' not in f2b_status.stdout
+# Verification is a HANDLER (`verify fail2ban jails`, defined immediately after
+# `restart fail2ban` in handlers/main.yml, and handlers run in definition order).
+# Checking here would test the server as it was BEFORE the restart this run
+# notified, which is the wrong server. Any task above that changes a filter or a
+# jail notifies both.

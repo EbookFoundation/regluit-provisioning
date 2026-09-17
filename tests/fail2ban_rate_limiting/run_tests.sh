@@ -155,9 +155,16 @@ assert "the ban is a rule VISIBLE TO iptables -S, not hidden in an nftables tabl
                                                "iptables -S | grep -q 10.0.0.2"
 # iptables -S prints the service names resolved to numbers; accept either form,
 # and assert 22 is absent so a wrong ban can never cost anyone the box.
+# Restored after being cut in review: this is the guard for the exact trap this
+# PR exists to have caught. Debian's defaults-debian.conf sets banaction to
+# nftables, so the [DEFAULT] override is load-bearing and alphabetical file
+# ordering is what makes it win. If either regresses, bans go somewhere the
+# runbook does not tell anyone to look.
+assert "no separate nftables f2b table was created" "! nft list ruleset 2>/dev/null | grep -q f2b-table"
 assert "the rule covers http and https only, never ssh" \
        "iptables -S | grep -Eq -- '--dports (80,443|http,https)' && ! iptables -S | grep -q -- '--dports .*22'"
 assert "the ban mails someone"                 "grep -q '10.0.0.2' /work/mail"
+assert "and fail2ban starting did NOT mail six times first" "! grep -q 'started on' /work/mail"
 assert "unban removes the firewall rule"       "fail2ban-client unban 10.0.0.2 >/dev/null && sleep 2 && ! iptables -S | grep -q 10.0.0.2"
 
 echo "--- expensive paths: 13/min is the measured human ceiling, 120 is not"
