@@ -97,6 +97,16 @@
     - restart apache
   tags: [certs]
 
+# Flush now, so the certificate this run just issued is actually being served
+# before the play continues. Without it the <IfFile> guard was evaluated while
+# the certificate was still absent, the 443 vhost stayed unloaded until the
+# end-of-play flush, and a failure in any later role file (celery, cron,
+# monitoring, log_management, patching) left the box with a certificate on disk
+# and nothing answering on 443 -- with the assert below already passed. This is
+# also what makes that assert mean what its message says. (Review of #78.)
+- name: Serve the new certificate before continuing
+  ansible.builtin.meta: flush_handlers
+
 - name: Keep the certbot renewal timer enabled
   become: yes
   ansible.builtin.systemd:
@@ -116,8 +126,12 @@
   stat:
     path: "/etc/letsencrypt/live/{{ server_name }}/fullchain.pem"
   register: certbot_cert_final
+  check_mode: false
   tags: [certs]
 
+# Skipped under --check: the certonly task above is a command, which --check
+# never runs, so on a certless host the certificate legitimately is not there
+# and this would fail with a misleading message about server_name.
 - name: Fail if the HTTPS vhost would be silently skipped
   ansible.builtin.assert:
     that:
@@ -129,4 +143,5 @@
       nothing on 443. Check that server_name ({{ server_name }}) matches the
       certificate lineage certbot actually issued.
     success_msg: "Certificate present, so the HTTPS vhost is active."
+  when: not ansible_check_mode
   tags: [certs]

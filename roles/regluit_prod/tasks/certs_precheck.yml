@@ -53,11 +53,16 @@
 # files/certbot_renewal_probe.py and tests/certbot_renewal_probe_test.py.
 - name: Ask certbot's own parser for the effective renewal settings
   become: yes
+  # ansible.builtin.script has no argv form, so cmd goes through the remote
+  # shell. server_name and alt_server_name are operator-set (group_vars or
+  # -e), and `-e server_name=...` is a pattern this repo uses, so quote them:
+  # a value with a space or a semicolon would otherwise be split or run.
   ansible.builtin.script:
     cmd: >-
       certbot_renewal_probe.py
-      /etc/letsencrypt/renewal/{{ server_name }}.conf
-      {{ ([server_name] + ([alt_server_name] if alt_server_name | default('') != '' else [])) | join(' ') }}
+      {{ ('/etc/letsencrypt/renewal/' ~ server_name ~ '.conf') | quote }}
+      {{ ([server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []))
+         | map('quote') | join(' ') }}
     executable: /usr/bin/python3
   register: certbot_renewal_probe
   changed_when: false
@@ -67,6 +72,11 @@
     - certbot_manage | default(false) | bool
     - certbot_precheck_cert.stat.exists | default(false)
 
+# The five expressions below are duplicated, on purpose, in
+# tests/certs_precheck_verdict_cases.yml -- Ansible offers no way to exercise a
+# task file's vars with a stubbed register. Edit them together or the test goes
+# on passing while this stops working. That test is what caught the CR bug
+# described above, so it is worth the duplication.
 - name: The stored renewal settings must match the webroot the vhost serves
   vars:
     # Ansible's script action runs over a pseudo-terminal, so stdout comes back

@@ -4,6 +4,12 @@
 # separately, and against the real script, by
 # tests/certbot_renewal_probe_test.py.
 #
+# The five expressions in the first play are a DELIBERATE COPY of the ones in
+# certs_precheck.yml: Ansible offers no way to exercise a task file's vars with
+# a stubbed register. Edit them together, or this keeps passing while the role
+# stops working. The copy has already earned itself once -- it is what caught
+# the carriage-return bug, where a CORRECT host would have failed the precheck.
+#
 #   ansible-playbook -i localhost, -c local tests/certs_precheck_verdict_cases.yml
 - hosts: localhost
   gather_facts: false
