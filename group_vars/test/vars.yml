@@ -17,8 +17,10 @@ wsgi_home: "/opt/regluit/venv"
 wsgi_python_path: "/opt/regluit/venv/bin/python3"
 git_repo: "https://github.com/Gluejar/regluit.git"
 git_branch: "master"
-# Certs come from certbot (/etc/letsencrypt/live/<server_name>/), as on prod.
+# Certs come from certbot (/etc/letsencrypt/live/<server_name>/), as on prod,
+# using the webroot + deploy-hook arrangement test has run since 2026-08-18.
 manage_certs: false
+certbot_manage: true
 # Anything but 'prod': keeps the "no production database" guard on and the
 # Beat schedule empty (see prod.py.j2).
 deploy_type: 'test'

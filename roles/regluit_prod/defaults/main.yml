@@ -22,3 +22,9 @@ email_safe_mode: false
 email_safe_mode_allowed_domains: ""
 email_safe_mode_allowed_addresses: ""
 email_safe_mode_redirect_to: ""
+
+# Certbot-managed certificates (tasks/certs_certbot.yml). Off by default;
+# production's certificate is managed outside this role.
+certbot_manage: false
+certbot_webroot: /var/lib/letsencrypt
+certbot_email: support@ebookfoundation.org
