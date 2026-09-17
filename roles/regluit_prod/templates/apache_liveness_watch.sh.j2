@@ -3,8 +3,9 @@
 # own cheapest request. Managed by Ansible (regluit_prod).
 # See EbookFoundation/security-private#32 (2026-09-17, ~30 min outage).
 #
-# Why: on 2026-09-17 every Apache request worker was busy under a distributed
-# crawl, the listen queue filled (511, its limit), and the server answered
+# Why: on 2026-09-17 every Apache request worker was busy under a crawl — one
+# address at ~27 requests/second, 69% of the day's traffic — the listen queue
+# filled (511, its limit), and the server answered
 # nothing — not even a static file requested on the box itself. The machine was
 # healthy: load ~0, memory free, DB fine. `systemctl restart apache2` fixed it
 # instantly. Nobody knew for 30 minutes. The existing wsgi_wedge_watch.sh
@@ -239,9 +240,10 @@ needs no TLS, no Django and no database — on ${FAILS} consecutive probes
 against the cap. A zero exit means apache2 came back up — it does not prove the
 site recovered. The snapshot below was taken just BEFORE the restart.)
 
-This is triage, not a fix: it shortens the outage and tells you it happened. The
-condition underneath (a distributed crawl saturating the worker pool on
-2026-09-17) is not addressed by a restart. See
+This is triage, not a fix: it shortens the outage and tells you it happened.
+Whatever saturated the worker pool is still doing it — on 2026-09-17 that was a
+crawler holding workers on /socialauth/login/google-oauth2/, which makes an
+outbound call per request. A restart does not address it. See
 EbookFoundation/security-private#32.
 
 Next restart no sooner than ${COOLDOWN}s from now; at most ${CAP} per hour, after
