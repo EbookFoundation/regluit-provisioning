@@ -109,9 +109,12 @@
   notify:
     - restart apache
 
+# logio is not listed: Ubuntu 24.04's apache2 has it compiled in
+# ("logio_module (static)"), there is no mods-available/logio.load, and
+# `a2enmod logio` exits 1 with "Module logio does not exist!".
 - name: Enable SSL rewrite headers
   become: yes
-  command: a2enmod ssl rewrite headers logio
+  command: a2enmod ssl rewrite headers
   notify: 
     - restart apache
 
