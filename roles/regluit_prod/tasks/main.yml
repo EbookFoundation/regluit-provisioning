@@ -151,6 +151,20 @@
     - restart celeryd
     - restart celerybeat
 
+# First build of a new box: pass -e stop_after_settings_render=true to stop
+# here, check which database the rendered settings point at, then run again
+# without it. Nothing before this point touches the database; collectstatic
+# and migrate (tasks/apache.yml) are the first things that do.
+# Only for a box that is not serving yet. `meta: end_host` does NOT flush
+# handlers, so the restart apache / celeryd / celerybeat notifications from
+# the two renders above are discarded: on a running box this leaves rewritten
+# settings on disk while apache and celery keep serving the old values, and
+# the next unrelated restart picks the change up invisibly. That is the drift
+# the handler comments cite from provisioning#37 / regluit#1140.
+- name: Stop after rendering settings when asked (check the database host first)
+  meta: end_host
+  when: stop_after_settings_render | default(false) | bool
+
 - name: Copy sysadmin scripts to home directory
   become: yes
   template:
@@ -207,6 +221,10 @@
 # - name: Run mysql tasks
 #   import_tasks: mysql.yml
 
+# apache.yml imports certs_precheck.yml itself, immediately before it renders
+# prod.conf and with the same tags, so no tagged run can rewrite the vhost
+# without first checking that this host's certificate and stored renewal
+# settings match what the new config expects.
 - name: Run apache tasks
   import_tasks: apache.yml
 

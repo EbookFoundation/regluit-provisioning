@@ -9,10 +9,31 @@ ServerName {{ server_name }}
 
 ServerAdmin info@ebookfoundation.org
 
+{% if certbot_manage | default(false) | bool %}
+# Serve Let's Encrypt HTTP-01 challenges straight from certbot's webroot, with
+# no redirect and no Django, so renewal also works in maintenance mode.
+# `Redirect` would take precedence over this Alias, hence the rewrite that
+# skips the challenge path. Proven on test.unglue.it 2026-08-18 (#67).
+Alias /.well-known/acme-challenge {{ certbot_webroot }}/.well-known/acme-challenge
+<Directory {{ certbot_webroot }}/.well-known/acme-challenge>
+  Require all granted
+  Options None
+  AllowOverride None
+</Directory>
+RewriteEngine On
+RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+RewriteRule ^(.*)$ https://{{ server_name }}$1 [R=301,L]
+{% else %}
 Redirect permanent / https://{{ server_name }}/
+{% endif %}
 
 </VirtualHost>
 
+{% if certbot_manage | default(false) | bool %}
+# A fresh box has no certificate yet: skip the HTTPS vhost until certbot has
+# written one, so apache can start and serve the challenge above.
+<IfFile /etc/letsencrypt/live/{{ server_name }}/fullchain.pem>
+{% endif %}
 
 <VirtualHost _default_:443>
 
@@ -185,3 +206,6 @@ LogFormat "%h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\" %D" comb
 CustomLog "|/usr/bin/cronolog /var/log/apache2/%Y%m%d_access.log" combined_time
 
 </VirtualHost>
+{% if certbot_manage | default(false) | bool %}
+</IfFile>
+{% endif %}

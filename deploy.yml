@@ -11,7 +11,7 @@
 #
 # WHAT IT DOES (default)
 #   1. git checkout {{ git_branch }} (force) into {{ project_path }}
-#   2. restart apache2, celeryd, celerybeat
+#   2. restart apache2, celeryd, and celerybeat unless celerybeat_enabled is false
 #   3. print the deployed SHA so you can verify  deployed == branch tip
 #
 # WHAT IT DOES NOT DO (by design — "no DB / no cert")
@@ -32,6 +32,15 @@
 #   ansible-playbook -i hosts deploy.yml -e deploy_target=regluit-test -e git_branch=hotfix/x  # test a branch on staging
 #
 #   Target host + branch come from group_vars/production (git_branch: "production").
+#
+# VAULT PASSWORD — needed for test as well as production, since 2026-09-17
+#   group_vars/test now has an encrypted vault.yml, so Ansible must decrypt it
+#   to load the test group at all. Without the `fef` vault identity, the two
+#   `-e deploy_target=regluit-test` lines above fail immediately with
+#   "Attempting to decrypt but no vault secrets found". There is no
+#   ansible.cfg in this repo to supply it, so set it in the environment:
+#     export ANSIBLE_VAULT_IDENTITY_LIST='fef@/path/to/vault_pass.txt'
+#   Production already required this. (regluit-provisioning#66.)
 #
 # ROLLBACK
 #   Re-run with -e git_branch=<previous tag/SHA/branch>, or (blue/green) flip the
@@ -90,11 +99,17 @@
         name: celeryd
         state: restarted
 
+    # Disabling a service does not stop an explicit restart, so a code deploy
+    # would otherwise start Beat again on a box that provisioning deliberately
+    # keeps it off (celerybeat_enabled: false). Default true: unchanged for
+    # production. deploy.yml does not import the role, so the role default is
+    # not in scope here and the default has to be repeated.
     - name: Restart celerybeat
       become: yes
       service:
         name: celerybeat
         state: restarted
+      when: celerybeat_enabled | default(true) | bool
 
     - name: Report deployed revision
       debug:

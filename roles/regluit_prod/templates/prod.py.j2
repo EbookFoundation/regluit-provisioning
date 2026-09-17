@@ -1,5 +1,20 @@
 # coding=utf-8
 from django.core.exceptions import ImproperlyConfigured
+{% if email_safe_mode | bool %}
+# Non-production email safety net (regluit#1238). settings/common.py reads
+# these from the environment when it is imported on the next line, so setting
+# them here covers both mod_wsgi and celery, which both load this module.
+# Do NOT set EMAIL_BACKEND in this file, and do not let settings/local.py set
+# it either: that would silently undo the net. The assertion at the bottom of
+# this file, after the local.py import, is what catches it.
+# Values go through to_json so an apostrophe in an address or domain cannot
+# produce a prod.py that fails to import.
+import os
+os.environ['EMAIL_SAFE_MODE'] = 'true'
+os.environ['EMAIL_SAFE_MODE_ALLOWED_DOMAINS'] = {{ email_safe_mode_allowed_domains | to_json }}
+os.environ['EMAIL_SAFE_MODE_ALLOWED_ADDRESSES'] = {{ email_safe_mode_allowed_addresses | to_json }}
+os.environ['EMAIL_SAFE_MODE_REDIRECT_TO'] = {{ email_safe_mode_redirect_to | to_json }}
+{% endif %}
 from .common import *
 
 ALLOWED_HOSTS = ['.unglue.it']
@@ -129,6 +144,23 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
+{% if email_safe_mode | bool %}
+        # This LOGGING dict REPLACES the one settings/common.py builds, and
+        # disable_existing_loggers is True. regluit.utils.safe_email_backend's
+        # logger already exists by now (common.py imports the module), and a
+        # '' entry does not rescue it: '' is not a key in loggerDict, so
+        # dictConfig never scans for its children and the module logger is
+        # disabled. Without this entry the safety net's ERROR line -- the only
+        # trace of a refused send, because Celery's send_mail_task swallows the
+        # RuntimeError -- goes nowhere, and a blocked email looks like a
+        # silently dropped one. Mirrors common.py's own entry, added for
+        # exactly this reason on 2026-08-31. (regluit#1238.)
+        'regluit.utils.safe_email_backend': {
+            'handlers': ['file'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+{% endif %}
     }
 }
 
@@ -184,5 +216,19 @@ try:
     from regluit.settings.local import *
 except ImportError:
     pass
+{% if email_safe_mode | bool %}
+
+# settings/local.py exists to override things per box, so it can also set
+# EMAIL_BACKEND -- after common.py installed the safety net. Fail loudly at
+# import rather than mail real users from a staging box. (regluit#1238.)
+from regluit.utils.safe_email_backend import ALLOWLIST_BACKEND_PATH
+if EMAIL_BACKEND != ALLOWLIST_BACKEND_PATH:
+    raise ImproperlyConfigured(
+        "EMAIL_SAFE_MODE is on but EMAIL_BACKEND is %r, not the allowlist "
+        "backend. Something after 'from .common import *' -- most likely "
+        "settings/local.py -- overrode it, which would let mail reach real "
+        "users from a non-production box." % (EMAIL_BACKEND,)
+    )
+{% endif %}
 
 NOTIFICATION_LOCK_FILE = '/opt/regluit/.lock/send_notices'

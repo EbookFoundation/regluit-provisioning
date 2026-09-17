@@ -19,6 +19,7 @@
     minute: "*/5"
     job: "/usr/local/sbin/mem_alert.sh"
     user: root
+    disabled: "{{ not (monitoring_alerts_enabled | bool) }}"
 
 # Wedged-wsgi-worker auto-heal (Gluejar/regluit#1204).
 # A daemon process whose WSGI script fails to load (import-time error during
@@ -42,3 +43,4 @@
     minute: "*/2"
     job: "/usr/local/sbin/wsgi_wedge_watch.sh"
     user: root
+    disabled: "{{ not (monitoring_alerts_enabled | bool) }}"

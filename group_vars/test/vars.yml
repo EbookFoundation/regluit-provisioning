@@ -1,16 +1,96 @@
 ---
-### Variables for the test.unglue.it staging server (deploy.yml / code-only) ###
-### Intentionally minimal & vault-free: deploy.yml does git checkout + restart   ###
-### only (no settings render / DB / certs), so no secret vars are needed here.    ###
+### Variables for the test.unglue.it staging server                          ###
+### Sensitive vars are references to values in vault.yml (encrypted, fef id). ###
+### vault.yml was built 2026-09-17 from the keys already rendered on test.     ###
+### Used by deploy.yml (code-only) and by setup-test.yml (full build).         ###
 
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
 # Python the venv runs on (major.minor); see roles/regluit_prod/defaults/main.yml
 python_version: "3.12"
+virtualenv_name: "venv"
 user_name: "ubuntu"
+server_name: "test.unglue.it"
+# No www. alias for staging; the apache template and certs tasks accept ''.
+alt_server_name: ""
+wsgi_home: "/opt/regluit/venv"
+wsgi_python_path: "/opt/regluit/venv/bin/python3"
 git_repo: "https://github.com/Gluejar/regluit.git"
 git_branch: "master"
+# Certs come from certbot (/etc/letsencrypt/live/<server_name>/), as on prod,
+# using the webroot + deploy-hook arrangement test has run since 2026-08-18.
+manage_certs: false
+certbot_manage: true
+# Anything but 'prod': keeps the "no production database" guard on and the
+# Beat schedule empty (see prod.py.j2).
+deploy_type: 'test'
 
 # Non-production environment: suppress error emails to prod admins.
 # See EbookFoundation/security-private#11.
 disable_admin_emails: true
+
+### Staging quiet ###
+# The two monitoring crons mail notices@gluejar.com through the local sendmail
+# as root, entirely outside Django -- so neither disable_admin_emails nor the
+# app's email_safe_mode can stop them. On staging they would arrive alongside
+# production's, and Eric reads error-mail volume as an intensity gauge, so
+# staging noise costs real signal. The scripts are still installed; only their
+# cron entries are commented out.
+# What this gives up on staging: wsgi_wedge_watch.sh also kills wedged
+# mod_wsgi daemon processes so they respawn (regluit#1204), so test loses that
+# auto-heal too. Acceptable here, and not a thing to switch off on a host that
+# serves users.
+monitoring_alerts_enabled: false
+
+# celerybeat_enabled is deliberately left at its default (true). deploy_type
+# 'test' leaves CELERY_BEAT_SCHEDULE empty (prod.py.j2), and the one app-level
+# cron is already gated on deploy_type == 'prod', so Beat runs with nothing to
+# run: turning it off would change test's running state for no gain. The
+# switch exists for a box built fresh from a copy of production data, where it
+# should be passed at run time.
+#
+# email_safe_mode is deliberately NOT set here. Turning it on for
+# test.unglue.it is approved but is its own change, with its own verification
+# -- see the plan on pull request #78. Note that with no allowlist and no
+# redirect address the app refuses to send to anyone, which is the point.
+
+### Variables in settings.prod.py ###
+mysql_db_name: "{{ vault_mysql_db_name }}"
+mysql_db_user: "{{ vault_mysql_db_user }}"
+mysql_db_pass: "{{ vault_mysql_db_pass }}"
+mysql_db_host: "{{ vault_mysql_db_host }}"
+mysql_db_port: ""
+email_host: "{{ vault_email_host }}"
+email_port: 587
+default_from_email: "unglueit@ebookfoundation.org"
+
+### Variables in common.py ###
+common_keys:
+  booxtream_api_key: "{{ vault_booxtream_api_key }}"
+  booxtream_api_user: "{{ vault_booxtream_api_user }}"
+  dropbox_key: "{{ vault_dropbox_key }}"
+  github_public_token: "{{ vault_github_public_token }}"
+  mailchimp_api_key: "{{ vault_mailchimp_api_key }}"
+  mailchimp_news_id: "{{ vault_mailchimp_news_id }}"
+  mobigen_url:  "{{ vault_mobigen_url }}"
+  mobigen_user_id:  "{{ vault_mobigen_user_id }}"
+  mobigen_password:  "{{ vault_mobigen_password }}"
+  ku_email:  "{{ vault_ku_email }}"
+  ku_password:  "{{ vault_ku_password }}"
+  stripe_pk:  "{{ vault_stripe_pk }}"
+  stripe_sk:  "{{ vault_stripe_sk }}"
+  librarything_key: "{{ vault_librarything_key }}"
+
+### Variables in host.py ### 
+host_keys:
+  secret_key: '{{ vault_secret_key }}'
+  google_books_api_key: "{{ vault_google_books_api_key }}"
+  email_host_user: '{{ vault_email_host_user }}'
+  email_host_password:  '{{ vault_email_host_password }}'
+  social_auth_google_oauth2_key: '{{ vault_social_auth_google_oauth2_key }}'
+  social_auth_google_oauth2_secret: '{{ vault_social_auth_google_oauth2_secret }}'
+  aws_access_key_id: '{{ vault_aws_access_key_id }}'
+  aws_secret_access_key: '{{ vault_aws_secret_access_key }}'
+  aws_storage_bucket_name:  '{{ vault_aws_storage_bucket_name }}'
+  cf_turnstile_site_key:  '{{ vault_cf_turnstile_site_key }}'
+  cf_turnstile_secret_key:  '{{ vault_cf_turnstile_secret_key }}'
