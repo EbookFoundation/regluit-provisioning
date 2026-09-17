@@ -14,7 +14,10 @@
 
 - name: Create apache config
   become: yes
-  tags: [apache-config, oom-hardening]
+  # rate-limiting is here because this template is what writes the fixed-path
+  # log the fail2ban jails read: a `--tags rate-limiting` run that skipped it
+  # would install the consumer without the producer.
+  tags: [apache-config, oom-hardening, rate-limiting]
   template:
     src: apache.conf.j2
     dest: "/etc/apache2/sites-available/prod.conf"

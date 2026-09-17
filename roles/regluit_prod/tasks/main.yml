@@ -172,6 +172,20 @@
   import_tasks: monitoring.yml
   tags: [monitoring, oom-hardening]
 
+# Deliberately NOT tagged `monitoring`, although it installs a monitor-shaped
+# thing. A fail2ban jail whose log file is missing does not degrade: fail2ban
+# refuses to configure and the WHOLE SERVER fails to start, no socket, no jails
+# (jailreader.py raises on "Have not found any log file"). The file is written by
+# the apache template, which `monitoring` does not select — so a
+# `--tags monitoring` run would have installed the jails without their log and
+# stopped fail2ban on production. `rate-limiting` selects both this and the
+# apache template task, and is the only tag that should be used for this work.
+# `--tags monitoring` (the watchdog and mem-alert crons) stays safe to run alone.
+- name: Run crawler rate-limiting tasks (fail2ban)
+  import_tasks: rate_limiting.yml
+  tags: [rate-limiting]
+  when: deploy_type | default('') == 'prod'
+
 - name: Run log management tasks
   import_tasks: log_management.yml
 

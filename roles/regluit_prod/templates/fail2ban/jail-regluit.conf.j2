@@ -1,0 +1,119 @@
+# Crawler rate limiting for unglue.it. Managed by Ansible (regluit_prod).
+# EbookFoundation/security-private#32. DO NOT EDIT ON THE BOX — edit the
+# template in regluit-provisioning and re-run, or your change is lost.
+#
+# TO SEE WHO IS BANNED:     sudo fail2ban-client banned
+# TO SEE ONE JAIL:          sudo fail2ban-client status regluit-flood
+# TO UNBAN SOMEONE:         sudo fail2ban-client unban 1.2.3.4
+# EVERY BAN AND UNBAN:      /var/log/fail2ban.log
+#
+# Bans are REJECT, not DROP (fail2ban's default, kept deliberately): a wrongly
+# banned reader gets an immediate error rather than a page that hangs forever,
+# so they can tell you something is wrong. Bans cover ports 80 and 443 ONLY, so
+# no ban can ever cost anyone SSH: whatever this gets wrong, you can still get
+# on the box and undo it.
+
+[DEFAULT]
+# Pinned rather than left at `auto`, because `auto` picks whichever backend
+# the box happens to have python3-pyinotify for, and the test covers polling.
+# Polling stats one file once a second; the cost is not measurable here.
+backend   = polling
+# Debian's own jail.d/defaults-debian.conf quietly overrides upstream's
+# banaction to `nftables`, which puts bans in `table inet f2b-table` where
+# `iptables -S` cannot see them at all. This box's other firewall rules — and
+# the two applied by hand during the 2026-09-17 incident — live in the iptables
+# view, and an operator who checks there during an outage must not conclude the
+# rate limiter is doing nothing. One place to look. The test asserts the rule is
+# visible to `iptables -S`.
+banaction = iptables-multiport
+usedns    = no
+port      = http,https
+protocol  = tcp
+ignoreip  = 127.0.0.1/8 ::1{{ (' ' ~ rate_limit_ignoreips) if rate_limit_ignoreips | default('') else '' }}
+
+# The log apache writes purely for this: a fixed path, a narrow format, and
+# nothing between apache and the file. The dated archive log cannot be used —
+# fail2ban follows fixed paths, and a jail pointed at /var/log/apache2/
+# %Y%m%d_access.log would watch one day's file forever from the next midnight
+# and never say so. See the comment on the second CustomLog in apache.conf.j2
+# for why cronolog's -S symlink is not the answer either.
+#
+# `tail` starts at the end of the file, so a restart re-reads nothing.
+logpath   = /var/log/apache2/ratelimit_access tail
+
+{% if monitoring_alerts_enabled | default(true) %}
+destemail = {{ mem_alert_email | default('notices@gluejar.com') }}
+sender    = {{ default_from_email | default('notices@gluejar.com') }}
+sendername = fail2ban
+# One mail per ban, deliberately not batched: the count is itself the signal for
+# how hard the site is being hit. sendmail (not mail-whois) because `whois` is
+# not installed on this box and the whois-flavoured actions would mail you a
+# "command not found" instead of a report.
+#
+# actionstart and actionstop are emptied on purpose. Left at their defaults,
+# action.d/sendmail-common.conf mails on every jail start and stop, which is
+# SIX messages per fail2ban restart with zero bans — measured. Every ansible run
+# that touches a filter or a jail, every reboot and every manual restart would
+# send them, and they would dilute the one thing the ban mails are for.
+action    = %(action_)s
+            sendmail[sender="%(sender)s", dest="%(destemail)s", sendername="%(sendername)s", actionstart="", actionstop=""]
+{% else %}
+action    = %(action_)s
+{% endif %}
+
+# Debian's fail2ban package enables an sshd jail of its own, in
+# jail.d/defaults-debian.conf. This file sorts after that one, so this wins.
+# Turning it off is not a security opinion; it is scope. This PR is about
+# crawlers, and the last thing production needs today is a new way to lock
+# ourselves out of the box. Enabling it is a separate, deliberate decision.
+[sshd]
+enabled = false
+
+# --- General flood -----------------------------------------------------------
+# 600 requests in 60 seconds = 10/second sustained for a full minute.
+# Measured against a normal day (2026-09-11, 474,391 requests, 95,211 distinct
+# addresses), counting each address's busiest SLIDING 60-second window:
+#   >=100 req: 11 addresses   >=150: 7   >=300: 1   >=600: 1   >=1200: 0
+# The single address over 600 peaked at 687 and was a scraper on Google Cloud.
+# The highest that was not was 286. Read that margin with care: fail2ban 1.0.2
+# does not count an exact window — FailTicket.adjustTime() ESTIMATES the
+# remaining count, and the estimate can exceed the true windowed count. So the
+# real margin is smaller than 600/286 suggests. Deliberately not tighter anyway:
+# addresses in the 150-300 band are
+# plausibly library or campus NAT gateways with many real readers behind one
+# address, and unglue.it serves libraries.
+[regluit-flood]
+enabled  = true
+filter   = regluit-flood
+maxretry = 600
+findtime = 60
+bantime  = 1h
+
+# --- The endpoints that hold a worker ----------------------------------------
+# 100 requests in 60 seconds to /feedback/, /search/, /socialauth/ or
+# /accounts/register/. Same measurement, restricted to those paths, across two
+# normal days (2026-09-08 and 2026-09-11): every address above 40 was a declared
+# or obvious crawler, and the highest that was not reached 13. This threshold is
+# about seven times the observed human ceiling.
+# This is the jail aimed at the actual wedge: an address that stays under the
+# flood threshold overall while concentrating on the paths that block on Google.
+[regluit-expensive]
+enabled  = true
+filter   = regluit-expensive
+maxretry = 100
+findtime = 60
+bantime  = 1h
+
+# --- Crawlers robots.txt already forbids --------------------------------------
+# Rate limiting cannot catch these and it is worth being exact about why: on
+# 2026-09-11 GPTBot made 167,001 requests from one address while never exceeding
+# 140 in any 60-second window. It is low and slow by design. On 2026-09-17 it
+# made 128,382 requests, 43,910 of them to /feedback/ and 46,947 to /accounts/,
+# paths its own robots.txt group forbids, and it fetched robots.txt zero times.
+# 20 requests in 10 minutes from a crawler that is supposed to fetch none.
+[regluit-badbot]
+enabled  = true
+filter   = regluit-badbot
+maxretry = 20
+findtime = 600
+bantime  = 24h

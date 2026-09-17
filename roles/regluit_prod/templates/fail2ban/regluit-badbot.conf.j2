@@ -1,0 +1,29 @@
+# Crawlers that regluit's own robots.txt tells to go away entirely, and which
+# came anyway. The list mirrors the `Disallow: /` group in regluit's
+# frontend/templates/robots.txt as of 2026-09-17 — it is not a new policy. The
+# two lists are in different repos and nothing enforces the correspondence, so
+# if one changes, change the other.
+#
+# Deliberately NOT here, because robots.txt deliberately allows them: Googlebot,
+# PerplexityBot, Amzn-SearchBot, OAI-SearchBot, Claude-SearchBot, Claude-User,
+# ChatGPT-User, Perplexity-User, Amzn-User, ClaudeBot, meta-webindexer. The test
+# asserts each of those is spared rather than trusting that none of them happens
+# to contain one of the names above.
+#
+# THE BOUNDARIES MATTER. An earlier version of this filter required a "/" after
+# the name, on the assumption that these agents all carry a version. Bytespider
+# does not: production logs today carry
+#   "Mozilla/5.0 (compatible; Bytespider; spider-feedback@bytedance.com)"
+# and that version of the filter matched none of it. The lookarounds accept any
+# non-token character — "/", ";", ")", space, end of string — while still
+# refusing a name embedded in a longer word.
+#
+# The name must be in the user agent, which is the last field on the line; the
+# trailing "$ is what pins it there, so a bot name in a requested URL cannot
+# match. A user agent containing an escaped quote would evade this.
+#
+# Managed by Ansible (regluit_prod). EbookFoundation/security-private#32.
+[Definition]
+badbots = GPTBot|CCBot|Bytespider|Amazonbot|meta-externalagent|Diffbot
+failregex = ^<HOST> \[.*"[^"]*(?<![\w.-])(?:%(badbots)s)(?![\w.-])[^"]*"$
+ignoreregex =

@@ -184,4 +184,35 @@ LogLevel warn
 LogFormat "%h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\" %D" combined_time
 CustomLog "|/usr/bin/cronolog /var/log/apache2/%Y%m%d_access.log" combined_time
 
+# A SECOND, deliberately narrow access log at a FIXED path, for fail2ban only
+# (roles/regluit_prod/tasks/rate_limiting.yml, security-private#32).
+#
+# Why a second log rather than a symlink to the dated one: fail2ban follows
+# fixed paths, and the archive above is written to a DATE-STAMPED path, so a
+# jail pointed at it would watch one day's file forever from the next midnight
+# and never say so. cronolog's -S option looks like the answer and is not:
+# measured in a container, cronolog opens the new dated file at rollover but
+# leaves the symlink pointing at the old one. Apache writing a fixed path
+# itself has no indirection to go stale.
+#
+# The format carries only what the three filters read: client address, time,
+# request line, user agent. No referer, no byte count, no %D — roughly 60% of
+# the size of the archive line. The archive above is unchanged and remains the
+# record; this file is scratch, truncated hourly by cron.
+#
+# The name deliberately has NO .log extension: /var/log/apache2/*.log is swept
+# by two cleanup crons (tasks/cron.yml), and one of them gzips files older than
+# two days, which on an idle server would delete this one out from under an
+# apache that is still holding it open — leaving fail2ban watching a path that
+# never comes back.
+#
+# Production only, because the cron that truncates this file lives in
+# tasks/rate_limiting.yml and that whole file is gated on deploy_type == 'prod'.
+# Written unconditionally it would grow without limit on dev, ondeck and test,
+# where nothing reads it and nothing empties it.
+{% if deploy_type | default('') == 'prod' %}
+LogFormat "%h %t \"%r\" \"%{User-Agent}i\"" ratelimit
+CustomLog /var/log/apache2/ratelimit_access ratelimit
+{% endif %}
+
 </VirtualHost>

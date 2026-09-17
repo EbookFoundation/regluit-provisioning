@@ -37,3 +37,32 @@
   ansible.builtin.service:
     name: celerybeat
     state: restarted
+
+# Must run before `restart fail2ban`, hence defined before it: a drop-in that
+# systemd has not re-read does not exist as far as the next start is concerned.
+- name: reload systemd
+  become: yes
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: restart fail2ban
+  become: yes
+  ansible.builtin.service:
+    name: fail2ban
+    state: restarted
+
+# Defined immediately after `restart fail2ban` so it runs after it: handlers fire
+# in definition order. The failure it guards against is not subtle but it is
+# silent from Ansible's point of view — a jail whose log file is missing or whose
+# filter does not parse makes fail2ban refuse the whole configuration, so the
+# service is not running at all and no jail is watching anything. Ask fail2ban
+# what it is actually running rather than trusting that the unit came back.
+- name: verify fail2ban jails
+  become: yes
+  ansible.builtin.command: fail2ban-client status
+  register: f2b_status
+  changed_when: false
+  failed_when: >
+    'regluit-flood' not in f2b_status.stdout or
+    'regluit-expensive' not in f2b_status.stdout or
+    'regluit-badbot' not in f2b_status.stdout

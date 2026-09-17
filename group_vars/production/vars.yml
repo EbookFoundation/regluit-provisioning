@@ -38,6 +38,14 @@ manage_certs: false
 alt_server_name: "www.unglue.it"
 deploy_type: 'prod'
 
+# Addresses fail2ban's crawler rate limiting must never ban, beyond localhost —
+# space-separated, CIDR allowed. Empty on purpose: on the measured traffic the
+# thresholds already clear Googlebot and the uptime probes by two orders of
+# magnitude, and an allowlist that nobody maintains is a trap. Add an entry only
+# for something that got banned and should not have been.
+# See roles/regluit_prod/tasks/rate_limiting.yml (security-private#32).
+rate_limit_ignoreips: ""
+
 ### Variables in settings.prod.py ###
 mysql_db_name: "{{ vault_mysql_db_name }}"
 mysql_db_user: "{{ vault_mysql_db_user }}"

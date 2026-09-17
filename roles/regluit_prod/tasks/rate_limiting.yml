@@ -1,0 +1,167 @@
+---
+# Crawler rate limiting (EbookFoundation/security-private#32).
+#
+# 2026-09-17: two outages, about 76 minutes, caused by worker exhaustion —
+# /socialauth/login/google-oauth2/ makes an OUTBOUND call to Google per request,
+# so each one holds an Apache worker while blocked off-box.
+#
+# fail2ban bans at the firewall, where blocked traffic costs no worker at all.
+# That is the argument for it over an Apache module: a 403 from Apache still
+# costs a worker, and workers are the thing that runs out. The measurements
+# behind the thresholds are in the jail template and in the PR.
+#
+# PROD ONLY — imported under `when: deploy_type == 'prod'` in tasks/main.yml.
+
+- name: Install fail2ban
+  become: yes
+  ansible.builtin.apt:
+    name: fail2ban
+    state: present
+
+# The regluit-flood filter matches EVERY request by design, and fail2ban logs a
+# "Found" line at INFO for every match. Left at the package default that is
+# ~2.2 million lines a day into /var/log/fail2ban.log — a second copy of the
+# access log, on a box whose logs already need three cleanup crons. NOTICE keeps
+# every Ban and Unban and drops the per-request noise. (Caught by Codex.)
+- name: Quiet fail2ban to NOTICE (the flood filter matches every request)
+  become: yes
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (regluit_prod). EbookFoundation/security-private#32.
+      [Definition]
+      loglevel = NOTICE
+    dest: /etc/fail2ban/fail2ban.d/regluit-loglevel.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - restart fail2ban
+    - verify fail2ban jails
+
+# Filters before jails. A jail that cannot be configured does not fail quietly
+# and alone: fail2ban refuses the whole configuration and the SERVER never comes
+# up — no socket, no jails at all. Ordering keeps the filters ahead of the jails
+# that name them.
+- name: Install regluit fail2ban filters
+  become: yes
+  ansible.builtin.template:
+    src: "fail2ban/{{ item }}.conf.j2"
+    dest: "/etc/fail2ban/filter.d/{{ item }}.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - regluit-flood
+    - regluit-expensive
+    - regluit-badbot
+  notify:
+    - restart fail2ban
+    - verify fail2ban jails
+
+# jail.d files load in alphabetical order and later files win, which is what
+# makes the [sshd] override inside this one effective against Debian's
+# defaults-debian.conf. The test asserts the sshd jail is not running.
+- name: Install regluit fail2ban jails
+  become: yes
+  ansible.builtin.template:
+    src: fail2ban/jail-regluit.conf.j2
+    dest: /etc/fail2ban/jail.d/regluit-rate-limit.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - restart fail2ban
+    - verify fail2ban jails
+
+# THE LOG FILE MUST EXIST BEFORE FAIL2BAN STARTS, AND ITS ABSENCE IS NOT A SMALL
+# PROBLEM. fail2ban refuses to configure a jail whose logpath is missing, and
+# that refusal takes down the entire server rather than the one jail — measured
+# against the real 1.0.2 package: "Have not found any log file for regluit-flood
+# jail", async configuration failed, no socket. So production would be left with
+# NO fail2ban rather than a partial one.
+#
+# Apache creates this file when it starts under the new config, but relying on
+# that couples the jails to apache's restart order, and to an operator never
+# sweeping /var/log/apache2 by hand under disk pressure — which has happened here
+# before (Gluejar/regluit#1111). Creating it here makes the jails startable on
+# their own; the tmpfiles.d entry makes that true across a reboot as well, where
+# apache2 and fail2ban have no ordering relationship between them.
+- name: Create the fail2ban systemd drop-in directory
+  become: yes
+  ansible.builtin.file:
+    path: /etc/systemd/system/fail2ban.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure the rate-limiting log exists before any jail names it
+  become: yes
+  ansible.builtin.file:
+    path: /var/log/apache2/ratelimit_access
+    state: touch
+    owner: root
+    group: adm
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+
+# The task above fixes the file at deploy time. This fixes it at EVERY start,
+# which is the stronger statement and the one that matters: nothing orders
+# apache2 ahead of fail2ban at boot, and `needrestart` after unattended-upgrades
+# can bounce fail2ban at any hour without an ansible run anywhere near it. If the
+# file has been removed since the last deploy, ExecStartPre puts it back before
+# fail2ban reads its configuration, so a missing log can no longer stop the
+# service. (A tmpfiles.d entry was the first attempt and only covered boot.)
+#
+# After=apache2.service is the ordering, and is the weaker half: it makes
+# fail2ban start after the thing that writes its log, but it is ExecStartPre that
+# makes the file exist. Neither requires apache to be healthy.
+- name: Make fail2ban create its own log file before it reads its config
+  become: yes
+  ansible.builtin.copy:
+    content: |
+      # Managed by Ansible (regluit_prod). EbookFoundation/security-private#32.
+      [Unit]
+      After=apache2.service
+
+      [Service]
+      ExecStartPre=/usr/bin/mkdir -p /var/log/apache2
+      ExecStartPre=/usr/bin/touch /var/log/apache2/ratelimit_access
+    dest: /etc/systemd/system/fail2ban.service.d/regluit-ratelimit-log.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart fail2ban
+    - verify fail2ban jails
+
+# ratelimit_access is scratch: the record of what happened is the dated archive
+# log, which the existing cleanup crons manage. Hourly rather than daily so the
+# file holds a few MB on a normal day and about 12 MB in a heavy hour, instead
+# of the ~280 MB a day like 2026-09-17 would accumulate. (Measured: this narrow
+# format is 128 bytes a line against the archive's 296.) Truncating it
+# under a running apache is safe because apache opens its logs O_APPEND, so the
+# next write goes to the new end of file rather than leaving a sparse hole; and
+# fail2ban notices a file that shrank and re-reads it from the start.
+- name: Truncate the rate-limiting log hourly
+  become: yes
+  ansible.builtin.cron:
+    name: "ratelimit-log-truncate"
+    minute: "2"
+    job: "truncate -s 0 /var/log/apache2/ratelimit_access"
+    user: root
+
+- name: Ensure fail2ban is running and enabled
+  become: yes
+  ansible.builtin.service:
+    name: fail2ban
+    state: started
+    enabled: yes
+
+# Verification is a HANDLER (`verify fail2ban jails`, defined immediately after
+# `restart fail2ban` in handlers/main.yml, and handlers run in definition order).
+# Checking here would test the server as it was BEFORE the restart this run
+# notified, which is the wrong server. Any task above that changes a filter or a
+# jail notifies both.
