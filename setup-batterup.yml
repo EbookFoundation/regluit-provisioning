@@ -11,7 +11,7 @@
   # No Python version is pinned here on purpose: Ansible runs on Ubuntu's own
   # python3. The version the *app* runs on is the python_version variable
   # (group_vars), enforced by the venv assertion in roles/regluit_prod.
-  # (Was: apt install python3.8, which Ubuntu 24.04 does not offer - #74.)
+  # (Was: apt install python3.6, which current Ubuntu does not offer - #74.)
   - name: Bootstrap - ensure python3 exists so Ansible modules can run
     become: true
     raw: test -x /usr/bin/python3 || (apt-get -qqy update && apt-get install -qqy python3 && echo BOOTSTRAP_INSTALLED)

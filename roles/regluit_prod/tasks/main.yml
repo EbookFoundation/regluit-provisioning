@@ -11,6 +11,10 @@
     name: ['git', 'libxml2-dev', 'libxslt1-dev', 'python3-lxml', 'python3-dev', 'python3-pip', 'python3-virtualenv', 'build-essential', 'libssl-dev', 'libffi-dev', 'default-mysql-client', 'default-libmysqlclient-dev', 'libcairo2', 'postfix', 'libjpeg-dev', 'pkg-config']
     update_cache: true
     state: present
+    # Several of these are metapackages (default-mysql-client, ...). On a server
+    # that already has the older names installed, apt could decide to remove
+    # something to satisfy them. Fail instead of removing; a person decides.
+    fail_on_autoremove: true
   tags: [packages]
 
 - name: Create project directory
@@ -37,10 +41,12 @@
     # explicit pins in requirements.txt.
     state: present
     virtualenv: "{{ project_path }}/venv"
-    # --exists-action=w: when an editable git checkout in venv/src no longer
-    # matches the pinned URL/commit (e.g. branch switch), wipe + re-clone
-    # instead of prompting "What to do?" into a pipe nobody can answer
-    # (observed hanging deploys for an hour on 2026-06-11). Supersedes PR #39.
+    # --exists-action=w: when pip finds an existing checkout in venv/src that
+    # conflicts with the requirement (a different repository URL or directory),
+    # it would otherwise prompt "What to do?" into a pipe nobody can answer
+    # (observed hanging deploys for an hour on 2026-06-11). "w" answers: wipe
+    # and re-clone. A new commit at the same URL is just updated, no wipe.
+    # Supersedes PR #39.
     extra_args: "--exists-action=w"
 
 # Placed after the pip task so a from-scratch build has created the venv first.
