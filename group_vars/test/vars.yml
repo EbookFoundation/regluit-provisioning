@@ -29,6 +29,31 @@ deploy_type: 'test'
 # See EbookFoundation/security-private#11.
 disable_admin_emails: true
 
+### Staging quiet ###
+# The two monitoring crons mail notices@gluejar.com through the local sendmail
+# as root, entirely outside Django -- so neither disable_admin_emails nor the
+# app's email_safe_mode can stop them. On staging they would arrive alongside
+# production's, and Eric reads error-mail volume as an intensity gauge, so
+# staging noise costs real signal. The scripts are still installed; only their
+# cron entries are commented out.
+# What this gives up on staging: wsgi_wedge_watch.sh also kills wedged
+# mod_wsgi daemon processes so they respawn (regluit#1204), so test loses that
+# auto-heal too. Acceptable here, and not a thing to switch off on a host that
+# serves users.
+monitoring_alerts_enabled: false
+
+# celerybeat_enabled is deliberately left at its default (true). deploy_type
+# 'test' leaves CELERY_BEAT_SCHEDULE empty (prod.py.j2), and the one app-level
+# cron is already gated on deploy_type == 'prod', so Beat runs with nothing to
+# run: turning it off would change test's running state for no gain. The
+# switch exists for a box built fresh from a copy of production data, where it
+# should be passed at run time.
+#
+# email_safe_mode is deliberately NOT set here. Turning it on for
+# test.unglue.it is approved but is its own change, with its own verification
+# -- see the plan on pull request #78. Note that with no allowlist and no
+# redirect address the app refuses to send to anyone, which is the point.
+
 ### Variables in settings.prod.py ###
 mysql_db_name: "{{ vault_mysql_db_name }}"
 mysql_db_user: "{{ vault_mysql_db_user }}"

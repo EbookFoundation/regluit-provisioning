@@ -33,6 +33,15 @@
 #
 #   Target host + branch come from group_vars/production (git_branch: "production").
 #
+# VAULT PASSWORD — needed for test as well as production, since 2026-09-17
+#   group_vars/test now has an encrypted vault.yml, so Ansible must decrypt it
+#   to load the test group at all. Without the `fef` vault identity, the two
+#   `-e deploy_target=regluit-test` lines above fail immediately with
+#   "Attempting to decrypt but no vault secrets found". There is no
+#   ansible.cfg in this repo to supply it, so set it in the environment:
+#     export ANSIBLE_VAULT_IDENTITY_LIST='fef@/path/to/vault_pass.txt'
+#   Production already required this. (regluit-provisioning#66.)
+#
 # ROLLBACK
 #   Re-run with -e git_branch=<previous tag/SHA/branch>, or (blue/green) flip the
 #   Elastic IP back to blue. This playbook is idempotent and reversible.
