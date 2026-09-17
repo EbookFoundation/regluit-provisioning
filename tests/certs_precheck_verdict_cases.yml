@@ -166,3 +166,43 @@
       loop: "{{ cases }}"
       loop_control:
         label: "{{ item.name }}"
+# Second play: the PRODUCTION shape. certbot_manage is unset there, so the
+# stat task is skipped and its registered variable has no .stat at all. If
+# `certbot_precheck_cert.stat.exists | default(false)` errored instead of
+# defaulting to false, every production run would break on a file that is
+# supposed to be inert for production. This play asserts it stays inert.
+- hosts: localhost
+  gather_facts: false
+  vars:
+    certbot_manage: false        # production: unset -> role default false
+    manage_certs: false          # production
+  tasks:
+    - name: Check whether this host already has a certificate
+      stat:
+        path: /nonexistent/does-not-matter
+      register: certbot_precheck_cert
+      check_mode: false
+      when: certbot_manage | default(false) | bool
+
+    - name: Show what the skipped register looks like
+      debug:
+        msg: "registered = {{ certbot_precheck_cert }}"
+
+    - name: The guard must evaluate to false without erroring
+      debug:
+        msg: "guard = {{ certbot_manage | default(false) | bool and (certbot_precheck_cert.stat.exists | default(false)) }}"
+
+    - name: Downstream task must be skipped, not error
+      ansible.builtin.assert:
+        that:
+          - false
+        fail_msg: "THIS MUST NOT RUN on production"
+      when:
+        - certbot_manage | default(false) | bool
+        - certbot_precheck_cert.stat.exists | default(false)
+
+    - name: The mutual-exclusion assert still runs on production
+      ansible.builtin.assert:
+        that:
+          - not (manage_certs | default(true) | bool and certbot_manage | default(false) | bool)
+        success_msg: "production passes the mutual-exclusion check"
