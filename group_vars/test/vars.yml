@@ -12,3 +12,10 @@ git_branch: "master"
 # Non-production environment: suppress error emails to prod admins.
 # See EbookFoundation/security-private#11.
 disable_admin_emails: true
+
+# Staging box: the apache liveness watchdog's cron is installed but disabled —
+# no automatic apache restart, and no mail from it. It gates only that cron
+# today; once PR #78 lands, the same switch also silences the two older
+# monitoring crons, which are still enabled here until then.
+# See EbookFoundation/security-private#32 and provisioning PR #78.
+monitoring_alerts_enabled: false
