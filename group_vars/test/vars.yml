@@ -5,6 +5,8 @@
 
 project_path: "/opt/regluit"
 django_settings_module: "regluit.settings.prod"
+# Python the venv runs on (major.minor); see roles/regluit_prod/defaults/main.yml
+python_version: "3.12"
 user_name: "ubuntu"
 git_repo: "https://github.com/Gluejar/regluit.git"
 git_branch: "master"
