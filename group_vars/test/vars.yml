@@ -55,9 +55,14 @@ monitoring_alerts_enabled: false
 # Email safety net ON (Gluejar/regluit#1238). test.unglue.it runs against a
 # copy of production's database, so it holds real users' addresses; without
 # this, a web action or a hand-run command there can mail them. With no
-# allowlist and no redirect address the app refuses to send to anyone -- the
-# point. A refused send is logged at ERROR by regluit.utils.safe_email_backend
-# (the logger prod.py.j2 wires up when this is on).
+# allowlist and no redirect address, Django's email backend refuses to send to
+# anyone -- the point. A refusal is logged at ERROR by
+# regluit.utils.safe_email_backend (the logger prod.py.j2 wires up when this is
+# on); in a batch, only the first refused message is logged.
+# NOT covered: anything that emails users without going through Django's email
+# backend -- notably the Mailchimp newsletter subscribe (core/tasks.py
+# ml_subscribe_task), where Mailchimp itself sends the confirmation. That needs
+# its own fix (staging Mailchimp credentials); see Gluejar/regluit#1238.
 # No redirect address on purpose: this file is public. If staging ever needs
 # to receive mail (e.g. to test password reset), put the redirect address in
 # the vault and reference it here, rather than writing it in this file.
