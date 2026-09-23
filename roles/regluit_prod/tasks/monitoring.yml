@@ -80,3 +80,31 @@
     # was unmerged) and is kept as a harmless belt-and-braces. The explicit
     # `false` in group_vars/{test,dev,ondeck} is what makes it off on staging.
     disabled: "{{ not (monitoring_alerts_enabled | default(true) | bool) }}"
+
+# Status sampler (EbookFoundation/security-private#33).
+# Not an alert: once a minute it records Apache's worker state and the open
+# MySQL connections to /var/log/regluit/status_sampler/, so the next "refused
+# traffic while idle" episode is measured instead of inferred. Read-only, no
+# mail, no restarts -- which is why it has its own switch rather than riding on
+# monitoring_alerts_enabled, and is on for staging too.
+
+- name: Install status sampler script
+  become: yes
+  copy:
+    src: status_sampler.sh
+    dest: /usr/local/sbin/status_sampler.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule status sampler (every 1 min)
+  become: yes
+  ansible.builtin.cron:
+    name: "status-sampler"
+    minute: "*"
+    # stdout/stderr discarded so cron never mails; the script's output is its log file.
+    job: "/usr/local/sbin/status_sampler.sh {{ server_name }} >/dev/null 2>&1"
+    # Not root: see the script header (group-writable log dir, symlink risk).
+    user: "{{ user_name }}"
+    # On unless a host sets status_sampler_enabled: false.
+    disabled: "{{ not (status_sampler_enabled | default(true) | bool) }}"
