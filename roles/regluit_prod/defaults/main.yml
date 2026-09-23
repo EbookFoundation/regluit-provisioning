@@ -1,0 +1,6 @@
+---
+# Major.minor Python the app's virtualenv runs on. Used for the venv
+# site-packages path and checked by the venv assertion in tasks/main.yml.
+# An OS package revision (3.12.3-1ubuntu0.15 -> .16) does not change this.
+# Changing it means rebuilding the venv, not just editing this value.
+python_version: "3.12"
