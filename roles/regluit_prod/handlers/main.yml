@@ -37,3 +37,5 @@
   ansible.builtin.service:
     name: celerybeat
     state: restarted
+  # Otherwise a settings re-render would start Beat on a box that keeps it off.
+  when: celerybeat_enabled | bool

@@ -19,6 +19,7 @@
     minute: "*/5"
     job: "/usr/local/sbin/mem_alert.sh"
     user: root
+    disabled: "{{ not (monitoring_alerts_enabled | bool) }}"
 
 # Wedged-wsgi-worker auto-heal (Gluejar/regluit#1204).
 # A daemon process whose WSGI script fails to load (import-time error during
@@ -42,6 +43,7 @@
     minute: "*/2"
     job: "/usr/local/sbin/wsgi_wedge_watch.sh"
     user: root
+    disabled: "{{ not (monitoring_alerts_enabled | bool) }}"
 
 # Apache liveness watchdog (EbookFoundation/security-private#32).
 # A different failure from the one above: the Python is fine and every worker is
@@ -73,7 +75,8 @@
     user: root
     # Off wherever monitoring is quiet — the script mails via sendmail as root,
     # outside Django, and restarts apache2. Neither belongs on a staging box.
-    # `default(true)` because the variable arrives with PR #78, which is not yet
-    # merged; the explicit `false` in group_vars/{test,dev,ondeck} is what makes
-    # it off on staging today, independently of that PR's merge order.
+    # Same switch as the two crons above. The role default (true) now supplies
+    # the variable; `default(true)` predates that (it was written while PR #78
+    # was unmerged) and is kept as a harmless belt-and-braces. The explicit
+    # `false` in group_vars/{test,dev,ondeck} is what makes it off on staging.
     disabled: "{{ not (monitoring_alerts_enabled | default(true) | bool) }}"

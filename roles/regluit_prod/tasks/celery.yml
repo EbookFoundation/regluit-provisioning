@@ -63,9 +63,22 @@
     enabled: yes
     state: reloaded
 
+# celerybeat_enabled: false keeps Beat stopped and disabled. For a staging box
+# whose database is a copy of production (real users' addresses): no scheduled
+# job should run there unless someone turns it on on purpose.
 - name: Start celerybeat
   become: yes
   ansible.builtin.service:
     name: celerybeat
     enabled: yes
     state: restarted
+  when: celerybeat_enabled | bool
+
+- name: Keep celerybeat stopped and disabled (celerybeat_enabled is false)
+  become: yes
+  ansible.builtin.service:
+    name: celerybeat
+    daemon_reload: yes
+    enabled: no
+    state: stopped
+  when: not (celerybeat_enabled | bool)
