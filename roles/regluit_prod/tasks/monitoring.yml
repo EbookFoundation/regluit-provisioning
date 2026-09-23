@@ -104,6 +104,7 @@
     minute: "*"
     # stdout/stderr discarded so cron never mails; the script's output is its log file.
     job: "/usr/local/sbin/status_sampler.sh {{ server_name }} >/dev/null 2>&1"
-    user: root
+    # Not root: see the script header (group-writable log dir, symlink risk).
+    user: "{{ user_name }}"
     # On unless a host sets status_sampler_enabled: false.
     disabled: "{{ not (status_sampler_enabled | default(true) | bool) }}"
