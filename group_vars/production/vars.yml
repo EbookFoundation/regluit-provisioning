@@ -80,3 +80,10 @@ host_keys:
   aws_storage_bucket_name:  '{{ vault_aws_storage_bucket_name }}'
   cf_turnstile_site_key:  '{{ vault_cf_turnstile_site_key }}'
   cf_turnstile_secret_key:  '{{ vault_cf_turnstile_secret_key }}'
+
+# Production: the monitoring crons (memory alert, wedged-wsgi auto-heal, apache
+# liveness watchdog) are ON. Stated explicitly rather than left to the task's
+# `default(true)`, so that production's state cannot be changed by a role
+# default landing in another PR — the same reason the staging groups carry an
+# explicit false. See EbookFoundation/security-private#32.
+monitoring_alerts_enabled: true

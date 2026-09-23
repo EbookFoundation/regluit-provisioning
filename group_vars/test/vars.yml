@@ -30,7 +30,7 @@ deploy_type: 'test'
 disable_admin_emails: true
 
 ### Staging quiet ###
-# The two monitoring crons mail notices@gluejar.com through the local sendmail
+# The monitoring crons mail notices@gluejar.com through the local sendmail
 # as root, entirely outside Django -- so neither disable_admin_emails nor the
 # app's email_safe_mode can stop them. On staging they would arrive alongside
 # production's, and Eric reads error-mail volume as an intensity gauge, so
@@ -40,6 +40,9 @@ disable_admin_emails: true
 # mod_wsgi daemon processes so they respawn (regluit#1204), so test loses that
 # auto-heal too. Acceptable here, and not a thing to switch off on a host that
 # serves users.
+# The same switch also disables the apache liveness watchdog's cron (#79,
+# EbookFoundation/security-private#32): no automatic apache restart on staging,
+# and no mail from it.
 monitoring_alerts_enabled: false
 
 # celerybeat_enabled is deliberately left at its default (true). deploy_type

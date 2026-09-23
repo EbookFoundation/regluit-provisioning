@@ -44,3 +44,39 @@
     job: "/usr/local/sbin/wsgi_wedge_watch.sh"
     user: root
     disabled: "{{ not (monitoring_alerts_enabled | bool) }}"
+
+# Apache liveness watchdog (EbookFoundation/security-private#32).
+# A different failure from the one above: the Python is fine and every worker is
+# simply BUSY, so the listen queue fills and Apache answers nothing at all — not
+# even a static file requested on the box itself. On 2026-09-17 that was a
+# 30-minute outage, ended only because a human noticed. The watchdog asks the box
+# for its own port-80 redirect once a minute and restarts apache2 after three
+# consecutive failures, with a cooldown and an hourly cap.
+#
+# On-box triage: it attempts to shorten an outage (it never verifies that the site
+# recovered), it does not prevent one, and it is not a substitute for stopping the
+# traffic that causes one.
+
+- name: Install apache liveness watchdog script
+  become: yes
+  template:
+    src: apache_liveness_watch.sh.j2
+    dest: /usr/local/sbin/apache_liveness_watch.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule apache liveness check (every 1 min)
+  become: yes
+  ansible.builtin.cron:
+    name: "apache-liveness-watch"
+    minute: "*"
+    job: "/usr/local/sbin/apache_liveness_watch.sh"
+    user: root
+    # Off wherever monitoring is quiet — the script mails via sendmail as root,
+    # outside Django, and restarts apache2. Neither belongs on a staging box.
+    # Same switch as the two crons above. The role default (true) now supplies
+    # the variable; `default(true)` predates that (it was written while PR #78
+    # was unmerged) and is kept as a harmless belt-and-braces. The explicit
+    # `false` in group_vars/{test,dev,ondeck} is what makes it off on staging.
+    disabled: "{{ not (monitoring_alerts_enabled | default(true) | bool) }}"
