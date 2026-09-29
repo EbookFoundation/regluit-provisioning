@@ -14,16 +14,18 @@
 #     (the main ones, listed below; not every piece of state the role touches):
 #     exists?, owner:group, mode, and the first 16 hex chars of its sha256.
 #     NEVER the contents. Several hold credentials (settings/prod.py,
-#     settings/keys/host.py, deploy/prod.wsgi, ~/.my.cnf); a truncated hash
-#     cannot be turned back into them, but treat the output as internal and do
-#     not post it publicly.
+#     settings/keys/host.py, deploy/prod.wsgi, ~/.my.cnf). A hash of a file
+#     built from a known template can confirm a guess about its contents, so
+#     treat the output as internal and do not post it publicly.
 #   - Private key files (TLS) are checked for existence only; they are not read.
 #   - Cron entries: the "#Ansible:" marker names plus a hash of each job line,
 #     not the line itself.
 #   - Versions, enabled apache modules/sites, systemd unit states, the app's
 #     deployed commit and branch, a hash of `pip freeze`.
-#   - Any command that fails prints ERROR in place of a value, so a failure can
-#     never look like a healthy result.
+#   - File hashes and the version, app and pip lines print ERROR if their
+#     command fails. Existence checks (MISSING / absent / off) depend on sudo,
+#     so the script checks sudo first and stops if it is unavailable. Apache,
+#     systemd and cron lines report what those tools print and may be blank.
 #
 # Read-only: no writes, no restarts, no package operations; git runs with
 # --no-optional-locks so `git status` does not refresh the index. Uses sudo
@@ -35,6 +37,10 @@ set -o pipefail
 export LC_ALL=C
 
 SERVER_NAME="${1:-unglue.it}"
+
+# Every existence check below goes through sudo; if sudo cannot run, they would
+# all read as MISSING. Stop instead.
+sudo -n true 2>/dev/null || { echo "ERROR sudo -n unavailable; nothing checked"; exit 1; }
 
 h() { local out; out=$(sudo sha256sum "$1" 2>/dev/null) && echo "${out:0:16}" || echo ERROR; }
 # Run a command; print its output, or ERROR if it fails or prints nothing.
