@@ -46,6 +46,32 @@
     group: "{{ user_name }}"
     mode: 0755
 
+# Maintenance mode (ported from feature/prod-green 671d7d4). apache.conf.j2's
+# maintenance block and apache_liveness_watch.sh both use /var/www/maintenance/,
+# but until this port nothing on master created it, so a fresh build served a
+# bare 503 with no page. Toggle: sudo touch / rm /var/www/maintenance/MAINTENANCE_ON.
+# The flag file itself is never managed here, so a run never turns
+# maintenance mode on or off.
+- name: Create maintenance-mode directory
+  become: yes
+  tags: [apache-config]
+  file:
+    path: "/var/www/maintenance"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: Install maintenance page
+  become: yes
+  tags: [apache-config]
+  template:
+    src: maintenance.html.j2
+    dest: "/var/www/maintenance/maintenance.html"
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0644
+
 - name: Create WSGI Script
   become: yes
   # tags: [config] — this is the third and last render of vault credentials in
