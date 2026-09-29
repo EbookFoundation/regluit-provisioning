@@ -78,7 +78,7 @@
     # Same switch as the two crons above. The role default (true) now supplies
     # the variable; `default(true)` predates that (it was written while PR #78
     # was unmerged) and is kept as a harmless belt-and-braces. The explicit
-    # `false` in group_vars/{test,dev,ondeck} is what makes it off on staging.
+    # `false` in group_vars/test is what makes it off on staging.
     disabled: "{{ not (monitoring_alerts_enabled | default(true) | bool) }}"
 
 # Status sampler (EbookFoundation/security-private#33).

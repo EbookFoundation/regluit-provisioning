@@ -55,7 +55,7 @@ DATABASES = {
 
 # Safety check: non-production deploys must not use production database
 # (deploy_type defaults to 'nonprod' — the SAFE direction: guard active, no
-# Beat schedule — for legacy targets like ondeck/batterup that never define it)
+# Beat schedule — for any target that never defines it)
 if '{{ deploy_type | default('nonprod') }}' != 'prod' and 'production' in DATABASES['default'].get('HOST', ''):
     raise ImproperlyConfigured(
         "deploy_type='{{ deploy_type | default('nonprod') }}' is connected to a production database "
