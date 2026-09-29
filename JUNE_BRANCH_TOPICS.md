@@ -14,7 +14,7 @@ past it since. Two things were genuinely missing. Both are ported in this PR.
 | Topic | June commit | Why |
 |---|---|---|
 | Maintenance page + `/var/www/maintenance/` | 671d7d4 | `apache.conf.j2` and `apache_liveness_watch.sh` on master both use this directory, but nothing on master created it or installed the page. A fresh build would serve a bare 503. |
-| Ansible-level "non-prod must not use the prod DB" assert | 44573ba | master had only the Django-level check in `prod.py.j2`, which fires after code checkout, package installs and restarts. The assert stops the run first. |
+| Ansible-level production-settings guard | 44573ba (+1 condition) | master had only the Django-level check in `prod.py.j2`, which fires after code checkout, package installs and restarts. The assert stops the run first. It catches two mistakes: a non-production host whose DB host name contains "production", and `deploy_type: prod` on a host outside the `production` group (e.g. `setup-test.yml -e deploy_type=prod`). Name-based, not a proof. |
 
 ## Already on master (usually in a newer form)
 
@@ -53,8 +53,27 @@ group_vars, inventory entries. `batterup`'s playbook targeted
 `regluit_common` / `regluit_dev` roles (a local-development recipe). That
 recipe already fails `--syntax-check` on master (`pip3` module); unchanged here.
 
+## Before building a new production server
+
+- **The TLS certificate must be on the box before the first full run.**
+  Production has `manage_certs: false` and no `certbot_manage`, so this role
+  neither issues the certificate nor checks for it, and `prod.conf` names
+  `/etc/letsencrypt/live/unglue.it/`. Without it, `apache2ctl configtest`
+  fails (seen on a from-scratch build, 2026-09-29). June's build issued it by
+  hand first with certbot's Route 53 DNS-01 plugin; the steps are in
+  `group_vars/prod-green/vars.yml` on `feature/prod-green`.
+- **The role assumes `ufw` and `unattended-upgrades` are already installed.**
+  Ubuntu's EC2 images ship both; a minimal image does not.
+- **test.unglue.it is behind master.** A `--check --diff --tags apache-config`
+  run on 2026-09-29 showed test's live `prod.conf` lacks master's July
+  crawler blocks and the certbot webroot alias (#67). A full run on test
+  would update it.
+
 ## How to check a server against this
 
-`scripts/describe_prod.sh` prints a read-only description of a server: file
-existence, owner, mode and a truncated hash for every file the role manages,
-never contents. Run it on production and on a freshly built box, and diff the two.
+`scripts/describe_prod.sh` prints a read-only description of a server: for
+the main files and directories the role renders or installs, existence,
+owner, mode and a truncated hash, never contents. Run it on production and on
+a freshly built box and diff the two. Hashes of credential-bearing files
+will differ wherever the credentials differ; compare those by eye, not as a
+failure.

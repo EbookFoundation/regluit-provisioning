@@ -2,30 +2,43 @@
 # describe_prod.sh - read-only description of a regluit server, for comparing
 # what the playbooks would build against what is actually running.
 #
-# Usage (from the control machine; nothing is copied to the server):
+# Usage (from the control machine; nothing is copied to the server). The one
+# argument is the host's server_name (default unglue.it), used for the
+# certificate paths:
 #   ssh ubuntu@unglue.it 'bash -s' < scripts/describe_prod.sh > prod.describe.txt
-#   ssh ubuntu@test.unglue.it 'bash -s' < scripts/describe_prod.sh > test.describe.txt
+#   ssh ubuntu@test.unglue.it 'bash -s -- test.unglue.it' < scripts/describe_prod.sh > test.describe.txt
 #   diff prod.describe.txt built.describe.txt
 #
 # What it prints, and what it never prints:
-#   - For each file the regluit_prod role manages: exists?, owner:group, mode,
-#     and the first 16 hex chars of its sha256. NEVER the contents. Several of
-#     these files hold credentials (settings/prod.py, settings/keys/host.py,
-#     deploy/prod.wsgi, ~/.my.cnf); a truncated hash reveals nothing usable.
+#   - For the files and directories the regluit_prod role renders or installs
+#     (the main ones, listed below; not every piece of state the role touches):
+#     exists?, owner:group, mode, and the first 16 hex chars of its sha256.
+#     NEVER the contents. Several hold credentials (settings/prod.py,
+#     settings/keys/host.py, deploy/prod.wsgi, ~/.my.cnf); a truncated hash
+#     cannot be turned back into them, but treat the output as internal and do
+#     not post it publicly.
 #   - Private key files (TLS) are checked for existence only; they are not read.
 #   - Cron entries: the "#Ansible:" marker names plus a hash of each job line,
 #     not the line itself.
 #   - Versions, enabled apache modules/sites, systemd unit states, the app's
 #     deployed commit and branch, a hash of `pip freeze`.
+#   - Any command that fails prints ERROR in place of a value, so a failure can
+#     never look like a healthy result.
 #
-# Changes nothing: no writes, no restarts, no package operations. Uses sudo
+# Read-only: no writes, no restarts, no package operations; git runs with
+# --no-optional-locks so `git status` does not refresh the index. Uses sudo
 # only to read (stat/sha256sum/crontab -l) files the ubuntu user cannot.
 # Output is deterministic (sorted, no timestamps) so two runs can be diffed.
 
 set -u
+set -o pipefail
 export LC_ALL=C
 
-h() { sudo sha256sum "$1" 2>/dev/null | cut -c1-16; }
+SERVER_NAME="${1:-unglue.it}"
+
+h() { local out; out=$(sudo sha256sum "$1" 2>/dev/null) && echo "${out:0:16}" || echo ERROR; }
+# Run a command; print its output, or ERROR if it fails or prints nothing.
+v() { local out; out=$("$@" 2>/dev/null) && [ -n "$out" ] && echo "$out" || echo ERROR; }
 
 describe_file() {
   local p="$1"
@@ -46,15 +59,27 @@ P=/opt/regluit
 
 echo "## system"
 echo "os $(. /etc/os-release && echo "$VERSION_ID")"
-echo "python3 $(python3 --version 2>&1 | awk '{print $2}')"
-echo "venv_python $($P/venv/bin/python --version 2>&1 | awk '{print $2}')"
+echo "python3 $(v python3 -c 'import platform; print(platform.python_version())')"
+echo "venv_python $(v $P/venv/bin/python -c 'import platform; print(platform.python_version())')"
 echo "swap_total_mb $(free -m | awk '/^Swap:/{print $2}')"
 
+echo "swapfile $(sudo test -e /swapfile && echo present || echo absent)"
+echo "fstab $(h /etc/fstab)"
+
+G="git --no-optional-locks -C $P"
 echo "## app"
-echo "app_commit $(git -C $P rev-parse HEAD 2>/dev/null || echo NONE)"
-echo "app_branch $(git -C $P rev-parse --abbrev-ref HEAD 2>/dev/null || echo NONE)"
-echo "app_dirty_files $(git -C $P status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
-echo "pip_freeze $($P/venv/bin/pip freeze 2>/dev/null | sort | sha256sum | cut -c1-16) count=$($P/venv/bin/pip freeze 2>/dev/null | wc -l | tr -d ' ')"
+echo "app_commit $(v $G rev-parse HEAD)"
+echo "app_branch $(v $G rev-parse --abbrev-ref HEAD)"
+if st=$($G status --porcelain 2>/dev/null); then
+  echo "app_dirty_files $(printf '%s' "$st" | grep -c . || true)"
+else
+  echo "app_dirty_files ERROR"
+fi
+if fr=$($P/venv/bin/pip freeze 2>/dev/null) && [ -n "$fr" ]; then
+  echo "pip_freeze $(printf '%s\n' "$fr" | sort | sha256sum | cut -c1-16) count=$(printf '%s\n' "$fr" | wc -l | tr -d ' ')"
+else
+  echo "pip_freeze ERROR"
+fi
 
 echo "## managed files"
 for f in \
@@ -76,14 +101,14 @@ for f in \
 done
 
 echo "## directories"
-for d in /var/www/static /var/www/maintenance /var/log/regluit /var/log/celery; do
+for d in /var/www/static /var/www/maintenance /var/log/regluit /var/log/celery $P/.lock; do
   if sudo test -d "$d"; then printf 'dir %s %s\n' "$d" "$(sudo stat -c '%U:%G %a' "$d")"; else printf 'dir %s MISSING\n' "$d"; fi
 done
 echo "maintenance_flag $(sudo test -e /var/www/maintenance/MAINTENANCE_ON && echo ON || echo off)"
 
 echo "## certificates (existence only; keys are not read)"
-exists_only /etc/letsencrypt/live/unglue.it/fullchain.pem
-exists_only /etc/letsencrypt/live/unglue.it/privkey.pem
+exists_only "/etc/letsencrypt/live/$SERVER_NAME/fullchain.pem"
+exists_only "/etc/letsencrypt/live/$SERVER_NAME/privkey.pem"
 
 echo "## apache"
 echo "mods_enabled $(ls /etc/apache2/mods-enabled/ 2>/dev/null | sed -n 's/\.load$//p' | sort | tr '\n' ' ')"

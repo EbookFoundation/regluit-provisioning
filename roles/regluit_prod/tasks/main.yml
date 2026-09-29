@@ -1,20 +1,29 @@
 ---
-# Ported from feature/prod-green 44573ba. prod.py.j2 has the same check, but it
-# only fires when Django imports its settings, i.e. after this role has already
-# checked out code, installed packages and restarted services on the box. This
-# assert stops the run before any of that. Tagged `always` so a narrow tagged
-# run (--tags config, ...) is guarded too. deploy_type defaults to 'nonprod',
-# the safe direction, matching prod.py.j2. The message names the group, not the
-# host value, because mysql_db_host comes from the vault.
-- name: Safety check - non-production deploys must not use the production database
+# Ported from feature/prod-green 44573ba, plus a second condition. It catches
+# two specific mistakes before the role changes anything (prod.py.j2's check on
+# the same name only fires when Django imports settings, after checkout,
+# installs and restarts):
+#   1. a non-production host whose database host name contains "production"
+#      (the naming convention of our production RDS instances);
+#   2. deploy_type 'prod' on a host outside the production group, e.g. a
+#      setup-test.yml run with -e deploy_type=prod, which would otherwise
+#      enable the production Beat schedule and run migrations on that box.
+# It is a name-based guard, not a proof: a production database reached under a
+# name without "production" in it passes. Tagged `always` so narrow tagged runs
+# are guarded too. deploy_type defaults to 'nonprod', the safe direction. The
+# message does not print mysql_db_host, which comes from the vault.
+- name: Safety check - production settings only on production hosts
   tags: [always]
   assert:
     that:
+      - "(deploy_type | default('nonprod')) != 'prod' or 'production' in group_names"
       - "(deploy_type | default('nonprod')) == 'prod' or 'production' not in mysql_db_host"
     fail_msg: >
-      ABORTING: deploy_type={{ deploy_type | default('nonprod') }} but mysql_db_host
-      contains 'production'. Non-production environments must use their own
-      database. Check vault_mysql_db_host in this host's group_vars vault.
+      ABORTING: deploy_type={{ deploy_type | default('nonprod') }} on
+      {{ inventory_hostname }} (groups: {{ group_names | join(',') }}).
+      deploy_type 'prod' is allowed only in the production group, and a
+      non-production host must not use a database whose host name contains
+      'production'. Check this host's group_vars and any -e overrides.
     quiet: true
 
 - name: Install prod dependencies
