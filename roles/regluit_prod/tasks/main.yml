@@ -238,6 +238,45 @@
     - '80'
     - '443'
 
+# Optional deny rules (firewall_blocked_sources, defaults/main.yml). Empty by
+# default, so these tasks are skipped. At the firewall, not in Apache: Apache
+# applies Require only after it has read a request, too late for clients that
+# stall before sending one.
+- name: Check ufw is active before adding deny rules
+  become: yes
+  tags: [firewall]
+  command: ufw status
+  register: ufw_status
+  changed_when: false
+  when: firewall_blocked_sources | length > 0
+
+# Enabling ufw is a separate decision (it can cut off SSH if the allow rules
+# are wrong), so stop rather than add rules that would do nothing.
+- name: Stop if ufw is not active
+  tags: [firewall]
+  fail:
+    msg: >-
+      firewall_blocked_sources is set but ufw is not active on this host, so
+      deny rules would have no effect. Enable ufw first, or clear the list.
+  when:
+    - firewall_blocked_sources | length > 0
+    - "'Status: active' not in ufw_status.stdout"
+
+# insert: 1 puts each deny ahead of the allow rules above; ufw uses the first
+# rule that matches. It covers all ports, SSH included. The comment shows in
+# `ufw status`, so whoever finds the rule on the box can see why it is there.
+- name: Deny blocked sources at the firewall
+  become: yes
+  tags: [firewall]
+  ufw:
+    rule: deny
+    from_ip: "{{ item.source }}"
+    comment: "{{ item.comment | default(omit) }}"
+    insert: 1
+  loop: "{{ firewall_blocked_sources }}"
+  loop_control:
+    label: "{{ item.source }}"
+
 - name: Configure swap (memory-pressure cushion)
   import_tasks: swap.yml
   tags: [swap, oom-hardening]

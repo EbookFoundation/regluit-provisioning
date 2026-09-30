@@ -87,3 +87,39 @@ host_keys:
 # default landing in another PR — the same reason the staging groups carry an
 # explicit false. See EbookFoundation/security-private#32.
 monitoring_alerts_enabled: true
+
+# Blocks enforced at the AWS network ACL (not by this playbook)
+#
+# Some source addresses are denied before they reach the box, by inbound deny
+# rules on the VPC's default network ACL acl-f8546783. That ACL is shared by
+# subnet-b22d75ef (prod-green, test-2026-06-18), subnet-524cbc18 and
+# subnet-652d0238, so the blocks apply to test as well as prod. Ansible does
+# not manage NACL rules. The ACL also carries tags deny-50 / deny-51 with the
+# same summary as below.
+#   Add:    aws ec2 create-network-acl-entry ...   (profile gluejar_member)
+#   Remove: aws ec2 delete-network-acl-entry --network-acl-id acl-f8546783 \
+#             --ingress --rule-number <N>          (profile gluejar_member)
+#
+# Rule 50: 42.49.180.32/32
+#   What: China Unicom Hunan (whois netname UNICOM-HN).
+#   Why: unknown. No record found in the repos, notes or project history on
+#     2026-09-30. Ask Eric.
+#
+# Rule 51: 114.94.100.136/32
+#   What: China Telecom Shanghai. whois netname CHINANET-SH, inetnum
+#     114.80.0.0 - 114.95.255.255; no reverse DNS.
+#   Why: on 2026-09-30 this one address had 15 connections open to prod at
+#     once, and its /16 (114.94.x.x) held 67 of the 98 Apache workers stuck in
+#     "reading request" while the site ran near its 150-worker limit. See
+#     regluit-provisioning PR #91 (handshake timeout) and
+#     EbookFoundation/security-private#33.
+#   Added: Raymond Yee (via Claude), 2026-09-30.
+#   Review: revisit by 2026-12-31. Remove it if the handshake timeout alone
+#     keeps workers free.
+#
+# Why the network ACL rather than firewall_blocked_sources (tasks/main.yml):
+# the ACL filters traffic before it reaches either server and needs no change
+# on the hosts. Host-firewall details are recorded privately
+# (EbookFoundation/security-private#33). This list stays empty; the role's
+# ufw tasks stop rather than add rules on a host where ufw isn't active.
+firewall_blocked_sources: []
