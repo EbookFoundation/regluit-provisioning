@@ -117,8 +117,9 @@ monitoring_alerts_enabled: true
 #   Review: revisit by 2026-12-31. Remove it if the handshake timeout alone
 #     keeps workers free.
 #
-# Why not ufw (firewall_blocked_sources, tasks/main.yml): ufw is inactive on
-# prod and test (checked 2026-09-30), and turning it on risks locking out SSH.
-# Enabling it is a separate decision; until then this list stays empty, so a
-# full setup-prod.yml run doesn't stop at the ufw-active check.
+# Why the network ACL rather than firewall_blocked_sources (tasks/main.yml):
+# the ACL filters traffic before it reaches either server and needs no change
+# on the hosts. Host-firewall details are recorded privately
+# (EbookFoundation/security-private#33). This list stays empty; the role's
+# ufw tasks stop rather than add rules on a host where ufw isn't active.
 firewall_blocked_sources: []
