@@ -33,20 +33,20 @@ certbot_manage: false
 certbot_webroot: /var/lib/letsencrypt
 certbot_email: support@ebookfoundation.org
 
-# Django's shared cache (regluit#1257). Redis already runs on the box as
-# Celery's broker (DB 0) and result store (DB 1), both set in the app's
-# settings/common.py. The cache gets its own logical DB so `redis-cli -n 2`
-# shows only cache keys, and a KEY_PREFIX so it is identifiable if it ever
-# shares a DB with anything else.
+# Django's shared cache for the OPDS feeds, CACHES['opds'] (regluit#1257;
+# templates/prod.py.j2 says why it is not the default cache). Redis already
+# runs on the box as Celery's broker (DB 0) and result store (DB 1), both set
+# in the app's settings/common.py. The cache gets its own logical DB so
+# `redis-cli -n 2` shows only cache keys, and a KEY_PREFIX so it is
+# identifiable if it ever shares a DB with anything else.
 django_cache_redis_url: "redis://127.0.0.1:6379/2"
 django_cache_key_prefix: "regluit"
 
 # Redis memory cap and eviction policy (tasks/redis.yml). The cache shares
 # this Redis with Celery's queue, and the queue must never be evicted.
-# volatile-lru only evicts keys that carry an expiry: every Django cache entry
-# the app writes has one except two small never-expiring signup-puzzle keys
-# (libraryauth/forms.py), and Celery's queue keys never do. So when the cap
-# is reached, cache entries go first and queued tasks are never dropped.
+# volatile-lru only evicts keys that carry an expiry: every feed cache entry
+# has one (an hour), and Celery's queue keys never do. So when the cap is
+# reached, cache entries go first and queued tasks are never dropped.
 # Celery's stored task results (DB 1) also expire (a day, Celery's default),
 # so they can be evicted too; the app reads a few back (core.models.CeleryTask,
 # e.g. LibraryThing import status), and an evicted one reads as PENDING.
