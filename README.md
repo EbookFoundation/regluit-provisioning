@@ -47,6 +47,20 @@ One important aspect of the `hosts` file is that it defines the groups which a h
 Currently there are two hosts: `regluit-prod` (unglue.it) in the `production` group and `regluit-test` (test.unglue.it) in the `test` group. The dead `dev`, `ondeck` and `batterup` targets were removed in 2026-09 (#56).
 These designations are important, as the `setup-prod` playbook specifically targets the `regluit-prod` host, and only that host will inherit the variables in `group_vars/production/`.   
 
+## Scripts
+
+Read-only helpers, run from the control machine by piping them over ssh; each file's header has the details and usage.
+
+- `scripts/describe_prod.sh`: describes what is installed and running on a server, for comparing against what the playbooks would build.
+
+### Log analysis scripts
+
+Stdlib-only Python 3 that read the Apache access logs (`/var/log/apache2/YYYYMMDD_access.log`) and print counts only, never IPs, user agents or URLs. Example: `ssh ubuntu@test.unglue.it 'python3 - 20260929' < scripts/url_family_report.py`.
+
+- `scripts/url_family_report.py`: requests, distinct URLs, server seconds and status codes per URL family (feedback, sign-in, keyword, deep `/free/` pages, OPDS, other), with time windows and a before/after `--compare` mode.
+- `scripts/page_depth.py`: how deep `/free/` requests page (`?work_list=N`), split into likely-human, browser-only and other traffic.
+- `scripts/cache_hit_estimate.py`: replays a log through a simulated shared cache and estimates hits and server seconds saved per URL family.
+
 ## Notes
 
 `sudo apt-get install mysql-client-8.0=8.0.19-0ubuntu5`
