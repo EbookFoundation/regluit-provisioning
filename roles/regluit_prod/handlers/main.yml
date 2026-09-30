@@ -1,20 +1,52 @@
 ---
-# Gate the restart on a config syntax check. Defined BEFORE `restart apache`
-# so it runs first (handlers fire in definition order). If apache2ctl
+# Gate the restart/reload on a config syntax check. Defined BEFORE `restart
+# apache` so it runs first (handlers fire in definition order). If apache2ctl
 # configtest fails on the freshly-rendered config, the play aborts here and
-# `restart apache` never runs — apache keeps serving the old in-memory config
+# neither handler below runs — apache keeps serving the old in-memory config
 # instead of being restarted into a broken one. (Codex-recommended OOM-apply
 # safety, Gluejar/regluit#1078.)
+# `listen` makes any notify of restart or reload run this too, so a task that
+# forgets to list "validate apache config" still gets the check.
 - name: validate apache config
   become: yes
   command: apache2ctl configtest
   changed_when: false
+  listen:
+    - restart apache
+    - reload apache
 
+# Full stop/start: for module enables and the prod.wsgi render. Apache refuses
+# connections until every child exits and SIGKILLs any still busy after ~10s
+# (AH00046), so config-only changes notify `reload apache` instead.
 - name: restart apache
   become: yes
   service:
     name: apache2
     state: restarted
+
+# The next three handlers make a restart win when a task in the same flush
+# notified reload too (a full run does both: a2enmod reports changed every
+# time). The flag is set and cleared only when restart was notified, so it
+# never leaks into a later flush.
+- name: note apache was restarted
+  set_fact:
+    apache_restarted_this_flush: true
+  listen: restart apache
+
+# Graceful (`apachectl graceful`): no refused connections. It also replaces the
+# mod_wsgi daemons, so the app restarts, and a Django request still running
+# ~3s after the reload gets a 500.
+- name: reload apache
+  become: yes
+  service:
+    name: apache2
+    state: reloaded
+  when: not (apache_restarted_this_flush | default(false))
+
+- name: clear apache restart note
+  set_fact:
+    apache_restarted_this_flush: false
+  listen: restart apache
 
 - name: restart journald
   become: yes
