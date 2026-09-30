@@ -47,6 +47,18 @@ One important aspect of the `hosts` file is that it defines the groups which a h
 Currently there are two hosts: `regluit-prod` (unglue.it) in the `production` group and `regluit-test` (test.unglue.it) in the `test` group. The dead `dev`, `ondeck` and `batterup` targets were removed in 2026-09 (#56).
 These designations are important, as the `setup-prod` playbook specifically targets the `regluit-prod` host, and only that host will inherit the variables in `group_vars/production/`.   
 
+## Pre-commit hooks
+
+`.pre-commit-config.yaml` rejects commits that add an unencrypted private key or other secrets (see security-private#10). Install it once per clone.
+pre-commit needs Python 3.9 or newer, and this repo's venv is Python 3.7, so install it outside the venv, e.g. with [pipx](https://pipx.pypa.io/):
+
+```
+$ pipx install pre-commit
+$ pre-commit install
+```
+
+CI runs gitleaks on every PR as a backstop (`.github/workflows/gitleaks.yml`).
+
 ## Notes
 
 `sudo apt-get install mysql-client-8.0=8.0.19-0ubuntu5`

@@ -1,0 +1,41 @@
+# Pre-commit hooks for regluit-provisioning
+#
+# Install: pre-commit needs Python 3.9+, and this repo's venv is 3.7, so
+# install it outside the venv, e.g.:
+#   pipx install pre-commit && pre-commit install
+# Manual run: pre-commit run --all-files
+#
+# These hooks run on every `git commit` to catch secrets
+# before they become commits. They can be bypassed with --no-verify but that's
+# intentional — commit with care.
+
+repos:
+  - repo: local
+    hooks:
+      - id: no-plaintext-private-keys
+        name: Reject unencrypted private keys
+        description: |
+          Refuse to commit files containing PEM private keys unless the file
+          is ansible-vault encrypted (starts with $ANSIBLE_VAULT). This
+          prevents accidents like security-private#10 where a wildcard key
+          was committed to a public repo.
+        entry: .githooks/check-no-plaintext-keys.sh
+        language: script
+        pass_filenames: true
+        types: [file]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # frozen: v5.0.0
+    hooks:
+      - id: detect-private-key
+        # Built-in hook as a belt-and-suspenders check; catches common PEM
+        # headers (RSA, EC, PGP, etc.) that our custom hook might miss.
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e  # frozen: v8.30.1
+    hooks:
+      - id: gitleaks
+        # Broader secret scanning: AWS keys, GitHub tokens, Stripe keys,
+        # generic API keys, private keys in any PEM format, etc. Uses
+        # .gitleaks.toml for repo-specific allowlists (placeholder defaults
+        # in templates are allowlisted there).
