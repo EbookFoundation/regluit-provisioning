@@ -88,10 +88,24 @@ host_keys:
 # explicit false. See EbookFoundation/security-private#32.
 monitoring_alerts_enabled: true
 
-# Firewall block (ufw deny, all ports), applied by roles/regluit_prod/tasks/main.yml
-# under the `firewall` tag. Production only; test has no entries.
+# Blocks enforced at the AWS network ACL (not by this playbook)
 #
-# 114.94.100.136/32
+# Some source addresses are denied before they reach the box, by inbound deny
+# rules on the VPC's default network ACL acl-f8546783. That ACL is shared by
+# subnet-b22d75ef (prod-green, test-2026-06-18), subnet-524cbc18 and
+# subnet-652d0238, so the blocks apply to test as well as prod. Ansible does
+# not manage NACL rules. The ACL also carries tags deny-50 / deny-51 with the
+# same summary as below.
+#   Add:    aws ec2 create-network-acl-entry ...   (profile gluejar_member)
+#   Remove: aws ec2 delete-network-acl-entry --network-acl-id acl-f8546783 \
+#             --ingress --rule-number <N>          (profile gluejar_member)
+#
+# Rule 50: 42.49.180.32/32
+#   What: China Unicom Hunan (whois netname UNICOM-HN).
+#   Why: unknown. No record found in the repos, notes or project history on
+#     2026-09-30. Ask Eric.
+#
+# Rule 51: 114.94.100.136/32
 #   What: China Telecom Shanghai. whois netname CHINANET-SH, inetnum
 #     114.80.0.0 - 114.95.255.255; no reverse DNS.
 #   Why: on 2026-09-30 this one address had 15 connections open to prod at
@@ -101,8 +115,10 @@ monitoring_alerts_enabled: true
 #     EbookFoundation/security-private#33.
 #   Added: Raymond Yee (via Claude), 2026-09-30.
 #   Review: revisit by 2026-12-31. Remove it if the handshake timeout alone
-#     keeps workers free. Taking it out of this list does not delete the rule
-#     on the box: also run `sudo ufw delete deny from 114.94.100.136`.
-firewall_blocked_sources:
-  - source: 114.94.100.136/32
-    comment: "regluit: stalled-connection source 2026-09-30, see security-private#33"
+#     keeps workers free.
+#
+# Why not ufw (firewall_blocked_sources, tasks/main.yml): ufw is inactive on
+# prod and test (checked 2026-09-30), and turning it on risks locking out SSH.
+# Enabling it is a separate decision; until then this list stays empty, so a
+# full setup-prod.yml run doesn't stop at the ufw-active check.
+firewall_blocked_sources: []
