@@ -87,3 +87,22 @@ host_keys:
 # default landing in another PR — the same reason the staging groups carry an
 # explicit false. See EbookFoundation/security-private#32.
 monitoring_alerts_enabled: true
+
+# Firewall block (ufw deny, all ports), applied by roles/regluit_prod/tasks/main.yml
+# under the `firewall` tag. Production only; test has no entries.
+#
+# 114.94.100.136/32
+#   What: China Telecom Shanghai. whois netname CHINANET-SH, inetnum
+#     114.80.0.0 - 114.95.255.255; no reverse DNS.
+#   Why: on 2026-09-30 this one address had 15 connections open to prod at
+#     once, and its /16 (114.94.x.x) held 67 of the 98 Apache workers stuck in
+#     "reading request" while the site ran near its 150-worker limit. See
+#     regluit-provisioning PR #91 (handshake timeout) and
+#     EbookFoundation/security-private#33.
+#   Added: Raymond Yee (via Claude), 2026-09-30.
+#   Review: revisit by 2026-12-31. Remove it if the handshake timeout alone
+#     keeps workers free. Taking it out of this list does not delete the rule
+#     on the box: also run `sudo ufw delete deny from 114.94.100.136`.
+firewall_blocked_sources:
+  - source: 114.94.100.136/32
+    comment: "regluit: stalled-connection source 2026-09-30, see security-private#33"

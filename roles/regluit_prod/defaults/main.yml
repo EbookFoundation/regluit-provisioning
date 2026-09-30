@@ -54,8 +54,12 @@ apache_timeout: 300
 apache_request_read_timeout: "handshake=10-20,MinRate=500 header=20-40,MinRate=500 body=10,MinRate=500"
 
 # Sources to drop at the firewall (tasks/main.yml, ufw). Empty = no change.
+# Each entry is a source (address or CIDR) and an optional comment, which ufw
+# stores with the rule and shows in `ufw status`. Set per host group in
+# group_vars/<env>/vars.yml, with a note there saying why and when to revisit.
 # Needs ufw to be active on the host; the play stops with a message if it is
 # not, rather than adding rules that do nothing. Removing an entry here does
 # NOT remove its rule; delete it by hand (`ufw delete deny from <cidr>`).
 firewall_blocked_sources: []
-# - 114.94.100.136/32   # 15 open connections to prod during the 2026-09-30 saturation
+# - source: 203.0.113.7/32
+#   comment: "regluit: why, date, issue link"

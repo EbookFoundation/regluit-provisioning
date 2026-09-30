@@ -263,15 +263,19 @@
     - "'Status: active' not in ufw_status.stdout"
 
 # insert: 1 puts each deny ahead of the allow rules above; ufw uses the first
-# rule that matches. It covers all ports, SSH included.
+# rule that matches. It covers all ports, SSH included. The comment shows in
+# `ufw status`, so whoever finds the rule on the box can see why it is there.
 - name: Deny blocked sources at the firewall
   become: yes
   tags: [firewall]
   ufw:
     rule: deny
-    from_ip: "{{ item }}"
+    from_ip: "{{ item.source }}"
+    comment: "{{ item.comment | default(omit) }}"
     insert: 1
   loop: "{{ firewall_blocked_sources }}"
+  loop_control:
+    label: "{{ item.source }}"
 
 - name: Configure swap (memory-pressure cushion)
   import_tasks: swap.yml
