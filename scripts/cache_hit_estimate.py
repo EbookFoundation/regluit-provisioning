@@ -98,7 +98,7 @@ def simulate(records, ttls):
     totals = defaultdict(lambda: {'req': 0, 'secs': 0.0, 'urls': set()})
     hits = {ttl: defaultdict(lambda: {'hits': 0, 'saved': 0.0}) for ttl in ttls}
     expiry = {ttl: {} for ttl in ttls}
-    for t, url, secs in sorted(records):
+    for t, url, secs in sorted(records, key=lambda r: r[0]):  # stable: ties keep file order
         fam = family(url)
         tot = totals[fam]
         tot['req'] += 1

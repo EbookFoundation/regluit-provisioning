@@ -54,7 +54,7 @@ def page_of(query):
     # Same rule as el_pagination: missing or non-integer means page 1, and
     # 0 or negative is served as page 1. Django reads the last of repeated values.
     try:
-        return max(1, int(parse_qs(query).get('work_list', ['1'])[-1]))
+        return max(1, int(parse_qs(query, keep_blank_values=True).get('work_list', ['1'])[-1]))
     except ValueError:
         return 1
 
