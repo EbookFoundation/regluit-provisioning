@@ -1,0 +1,110 @@
+---
+# Lightweight memory-pressure alerting (Gluejar/regluit#1078).
+# Emails admins when MemAvailable falls below a threshold so an impending OOM
+# wedge is caught early, instead of being discovered when the site is already down.
+
+- name: Install memory-alert script
+  become: yes
+  template:
+    src: mem_alert.sh.j2
+    dest: /usr/local/sbin/mem_alert.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule memory-alert check (every 5 min)
+  become: yes
+  ansible.builtin.cron:
+    name: "mem-alert"
+    minute: "*/5"
+    job: "/usr/local/sbin/mem_alert.sh"
+    user: root
+    disabled: "{{ not (monitoring_alerts_enabled | bool) }}"
+
+# Wedged-wsgi-worker auto-heal (Gluejar/regluit#1204).
+# A daemon process whose WSGI script fails to load (import-time error during
+# django.setup()) serves nothing but 500s until killed — mod_wsgi never
+# restarts it on its own, and Django emits no error emails in this state.
+# The watcher kills such processes (mod_wsgi respawns them) and emails an alert.
+
+- name: Install wedged-wsgi-worker watcher script
+  become: yes
+  template:
+    src: wsgi_wedge_watch.sh.j2
+    dest: /usr/local/sbin/wsgi_wedge_watch.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule wedged-wsgi-worker check (every 2 min)
+  become: yes
+  ansible.builtin.cron:
+    name: "wsgi-wedge-watch"
+    minute: "*/2"
+    job: "/usr/local/sbin/wsgi_wedge_watch.sh"
+    user: root
+    disabled: "{{ not (monitoring_alerts_enabled | bool) }}"
+
+# Apache liveness watchdog (EbookFoundation/security-private#32).
+# A different failure from the one above: the Python is fine and every worker is
+# simply BUSY, so the listen queue fills and Apache answers nothing at all — not
+# even a static file requested on the box itself. On 2026-09-17 that was a
+# 30-minute outage, ended only because a human noticed. The watchdog asks the box
+# for its own port-80 redirect once a minute and restarts apache2 after three
+# consecutive failures, with a cooldown and an hourly cap.
+#
+# On-box triage: it attempts to shorten an outage (it never verifies that the site
+# recovered), it does not prevent one, and it is not a substitute for stopping the
+# traffic that causes one.
+
+- name: Install apache liveness watchdog script
+  become: yes
+  template:
+    src: apache_liveness_watch.sh.j2
+    dest: /usr/local/sbin/apache_liveness_watch.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule apache liveness check (every 1 min)
+  become: yes
+  ansible.builtin.cron:
+    name: "apache-liveness-watch"
+    minute: "*"
+    job: "/usr/local/sbin/apache_liveness_watch.sh"
+    user: root
+    # Off wherever monitoring is quiet — the script mails via sendmail as root,
+    # outside Django, and restarts apache2. Neither belongs on a staging box.
+    # Same switch as the two crons above. The role default (true) now supplies
+    # the variable; `default(true)` predates that (it was written while PR #78
+    # was unmerged) and is kept as a harmless belt-and-braces. The explicit
+    # `false` in group_vars/test is what makes it off on staging.
+    disabled: "{{ not (monitoring_alerts_enabled | default(true) | bool) }}"
+
+# Status sampler (EbookFoundation/security-private#33).
+# Not an alert: once a minute it records Apache's worker state and the open
+# MySQL connections to /var/log/regluit/status_sampler/, so the next "refused
+# traffic while idle" episode is measured instead of inferred. Read-only, no
+# mail, no restarts -- which is why it has its own switch rather than riding on
+# monitoring_alerts_enabled, and is on for staging too.
+
+- name: Install status sampler script
+  become: yes
+  copy:
+    src: status_sampler.sh
+    dest: /usr/local/sbin/status_sampler.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Schedule status sampler (every 1 min)
+  become: yes
+  ansible.builtin.cron:
+    name: "status-sampler"
+    minute: "*"
+    # stdout/stderr discarded so cron never mails; the script's output is its log file.
+    job: "/usr/local/sbin/status_sampler.sh {{ server_name }} >/dev/null 2>&1"
+    # Not root: see the script header (group-writable log dir, symlink risk).
+    user: "{{ user_name }}"
+    # On unless a host sets status_sampler_enabled: false.
+    disabled: "{{ not (status_sampler_enabled | default(true) | bool) }}"

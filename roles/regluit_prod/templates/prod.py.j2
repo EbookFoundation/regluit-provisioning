@@ -1,4 +1,20 @@
 # coding=utf-8
+from django.core.exceptions import ImproperlyConfigured
+{% if email_safe_mode | bool %}
+# Non-production email safety net (regluit#1238). settings/common.py reads
+# these from the environment when it is imported on the next line, so setting
+# them here covers both mod_wsgi and celery, which both load this module.
+# Do NOT set EMAIL_BACKEND in this file, and do not let settings/local.py set
+# it either: that would silently undo the net. The assertion at the bottom of
+# this file, after the local.py import, is what catches it.
+# Values go through to_json so an apostrophe in an address or domain cannot
+# produce a prod.py that fails to import.
+import os
+os.environ['EMAIL_SAFE_MODE'] = 'true'
+os.environ['EMAIL_SAFE_MODE_ALLOWED_DOMAINS'] = {{ email_safe_mode_allowed_domains | to_json }}
+os.environ['EMAIL_SAFE_MODE_ALLOWED_ADDRESSES'] = {{ email_safe_mode_allowed_addresses | to_json }}
+os.environ['EMAIL_SAFE_MODE_REDIRECT_TO'] = {{ email_safe_mode_redirect_to | to_json }}
+{% endif %}
 from .common import *
 
 ALLOWED_HOSTS = ['.unglue.it']
@@ -9,10 +25,17 @@ IS_PREVIEW = False
 
 SITE_ID = 1
 
+{% if disable_admin_emails | default(false) %}
+# This environment is non-production; override ADMINS to an empty tuple so
+# Django's AdminEmailHandler doesn't forward staging errors to production
+# admins. See EbookFoundation/security-private#11 (2026-04-23 incident).
+ADMINS = ()
+{% else %}
 ADMINS = (
-    ('Raymond Yee', 'rdhyee+ungluebugs@gluejar.com'),
+    ('Raymond Yee', 'raymond.yee+ungluebugs@gmail.com'),
     ('Eric Hellman', 'eric@gluejar.com'),
 )
+{% endif %}
 
 MANAGERS = ADMINS
 
@@ -30,6 +53,16 @@ DATABASES = {
     }
 }
 
+# Safety check: non-production deploys must not use production database
+# (deploy_type defaults to 'nonprod' — the SAFE direction: guard active, no
+# Beat schedule — for any target that never defines it)
+if '{{ deploy_type | default('nonprod') }}' != 'prod' and 'production' in DATABASES['default'].get('HOST', ''):
+    raise ImproperlyConfigured(
+        "deploy_type='{{ deploy_type | default('nonprod') }}' is connected to a production database "
+        "(HOST=%s). Non-production environments must use their own database. "
+        "Check vault_mysql_db_host in group_vars." % DATABASES['default']['HOST']
+    )
+
 TIME_ZONE = 'America/New_York'
 
 # settings for outbout email
@@ -44,7 +77,11 @@ EMAIL_PORT = '{{ email_port }}'
 DEFAULT_FROM_EMAIL = '{{ default_from_email }}'
 
 # send celery log to Python logging
-WORKER_HIJACK_ROOT_LOGGER = False
+# NOTE: Celery 5 + config_from_object(namespace='CELERY') reads ONLY the
+# CELERY_-prefixed setting names; the old unprefixed names are silently
+# ignored (verified empirically on celery 5.4.0, 2026-07-01 — see
+# provisioning#37 / regluit#1140 for the incident this caused).
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 
 # Next step to try https
 #BASE_URL = 'http://{{ server_name }}'
@@ -107,6 +144,23 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
+{% if email_safe_mode | bool %}
+        # This LOGGING dict REPLACES the one settings/common.py builds, and
+        # disable_existing_loggers is True. regluit.utils.safe_email_backend's
+        # logger already exists by now (common.py imports the module), and a
+        # '' entry does not rescue it: '' is not a key in loggerDict, so
+        # dictConfig never scans for its children and the module logger is
+        # disabled. Without this entry the safety net's ERROR line -- the only
+        # trace of a refused send, because Celery's send_mail_task swallows the
+        # RuntimeError -- goes nowhere, and a blocked email looks like a
+        # silently dropped one. Mirrors common.py's own entry, added for
+        # exactly this reason on 2026-08-31. (regluit#1238.)
+        'regluit.utils.safe_email_backend': {
+            'handlers': ['file'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+{% endif %}
     }
 }
 
@@ -115,29 +169,31 @@ STATIC_ROOT = '/var/www/static'
 #CKEDITOR_UPLOAD_PREFIX = 'https://unglue.it/static/media/'
 
 # start out with nothing scheduled
-CELERYBEAT_SCHEDULE = {}
+CELERY_BEAT_SCHEDULE = {}
 CELERY_LOG_DIR = '/var/log/celery'
 
 # decide which of the period tasks to add to the schedule
-if '{{ deploy_type }}' == 'test':
-    CELERYBEAT_SCHEDULE['send_test_email'] = SEND_TEST_EMAIL_JOB
-    CELERYBEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE_TEST
-elif '{{ deploy_type }}' == 'prod':
-    # update the statuses of campaigns
-    CELERYBEAT_SCHEDULE['update_active_campaign_statuses'] = UPDATE_ACTIVE_CAMPAIGN_STATUSES
-    CELERYBEAT_SCHEDULE['report_new_ebooks'] = EBOOK_NOTIFICATIONS_JOB
-    CELERYBEAT_SCHEDULE['notify_ending_soon'] = NOTIFY_ENDING_SOON_JOB
-    CELERYBEAT_SCHEDULE['update_account_statuses'] = UPDATE_ACCOUNT_STATUSES
-    CELERYBEAT_SCHEDULE['notify_expiring_accounts'] = NOTIFY_EXPIRING_ACCOUNTS
-    CELERYBEAT_SCHEDULE['refresh_acqs'] = REFRESH_ACQS_JOB
-    CELERYBEAT_SCHEDULE['refresh_acqs'] = NOTIFY_UNCLAIMED_GIFTS
-    CELERYBEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
-    CELERYBEAT_SCHEDULE['periodic_cleanup'] = PERIODIC_CLEANUP
-    CELERYBEAT_SCHEDULE['emit_notices'] = EMIT_NOTICES
-    CELERYBEAT_SCHEDULE['feature_new_work'] = FEATURE_NEW_WORK
+if '{{ deploy_type | default('nonprod') }}' == 'prod':
+    # Beat schedule per RY/Eric decision 2026-06-11: only these four jobs run.
+    # (emit_notices verified safe: send queue measured 0 on the 2026-06-11 prod copy.)
+    CELERY_BEAT_SCHEDULE['save_info_page'] = SAVE_INFO_PAGE
+    CELERY_BEAT_SCHEDULE['periodic_cleanup'] = PERIODIC_CLEANUP
+    CELERY_BEAT_SCHEDULE['emit_notices'] = EMIT_NOTICES
+    CELERY_BEAT_SCHEDULE['feature_new_work'] = FEATURE_NEW_WORK
+    # --- PARKED 2026-06-11 (campaign-era / unverified email senders) --------
+    # Re-enable deliberately, one at a time, after per-job verification.
+    # Audit trail: regluit#1140 (prune audit), provisioning#37 (dup-key bug).
+    #   update_active_campaign_statuses  (campaigns eliminated)
+    #   report_new_ebooks                (email; unverified recipients)
+    #   notify_ending_soon               (email; 0 campaigns ending within 7d)
+    #   update_account_statuses          (campaign-era housekeeping)
+    #   notify_expiring_accounts         (email; ~4 candidates measured)
+    #   refresh_acqs                     (never actually scheduled since Jan 2015:
+    #                                     dup-key typo ea5adba8 -- retire, don't revive)
+    #   notify_unclaimed_gifts           (email; 4 candidates; had been running
+    #                                     under the key 'refresh_acqs' since 2015)
 
-
-ACCEPT_CONTENT = ['pickle', 'json', 'msgpack', 'yaml']
+CELERY_ACCEPT_CONTENT = ['json']
 
 # set -- sandbox or production Amazon FPS?
 #AMAZON_FPS_HOST = "fps.sandbox.amazonaws.com"
@@ -146,9 +202,11 @@ AMAZON_FPS_HOST = "fps.amazonaws.com"
 # local settings for maintenance mode
 MAINTENANCE_MODE = False
 
-# Amazon keys to permit S3 access
-# https://console.aws.amazon.com/iam/home?region=us-east-1#/users/s3user?section=security_credentials
-DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+# S3 file storage is configured via the STORAGES dict in settings/common.py
+# (selected automatically when AWS keys are present). DEFAULT_FILE_STORAGE was
+# removed here deliberately: Django raises ImproperlyConfigured if it is set
+# alongside an explicit STORAGES (4.2), and ignores it silently on 5.1+ (which
+# would drop S3). See Gluejar/regluit#1202 / #1203.
 
 # we should suppress Google Analytics outside of production
 SHOW_GOOGLE_ANALYTICS = True
@@ -158,5 +216,19 @@ try:
     from regluit.settings.local import *
 except ImportError:
     pass
+{% if email_safe_mode | bool %}
+
+# settings/local.py exists to override things per box, so it can also set
+# EMAIL_BACKEND -- after common.py installed the safety net. Fail loudly at
+# import rather than mail real users from a staging box. (regluit#1238.)
+from regluit.utils.safe_email_backend import ALLOWLIST_BACKEND_PATH
+if EMAIL_BACKEND != ALLOWLIST_BACKEND_PATH:
+    raise ImproperlyConfigured(
+        "EMAIL_SAFE_MODE is on but EMAIL_BACKEND is %r, not the allowlist "
+        "backend. Something after 'from .common import *' -- most likely "
+        "settings/local.py -- overrode it, which would let mail reach real "
+        "users from a non-production box." % (EMAIL_BACKEND,)
+    )
+{% endif %}
 
 NOTIFICATION_LOCK_FILE = '/opt/regluit/.lock/send_notices'

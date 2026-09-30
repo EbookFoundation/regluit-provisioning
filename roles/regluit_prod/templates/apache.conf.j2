@@ -9,10 +9,31 @@ ServerName {{ server_name }}
 
 ServerAdmin info@ebookfoundation.org
 
+{% if certbot_manage | default(false) | bool %}
+# Serve Let's Encrypt HTTP-01 challenges straight from certbot's webroot, with
+# no redirect and no Django, so renewal also works in maintenance mode.
+# `Redirect` would take precedence over this Alias, hence the rewrite that
+# skips the challenge path. Proven on test.unglue.it 2026-08-18 (#67).
+Alias /.well-known/acme-challenge {{ certbot_webroot }}/.well-known/acme-challenge
+<Directory {{ certbot_webroot }}/.well-known/acme-challenge>
+  Require all granted
+  Options None
+  AllowOverride None
+</Directory>
+RewriteEngine On
+RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
+RewriteRule ^(.*)$ https://{{ server_name }}$1 [R=301,L]
+{% else %}
 Redirect permanent / https://{{ server_name }}/
+{% endif %}
 
 </VirtualHost>
 
+{% if certbot_manage | default(false) | bool %}
+# A fresh box has no certificate yet: skip the HTTPS vhost until certbot has
+# written one, so apache can start and serve the challenge above.
+<IfFile /etc/letsencrypt/live/{{ server_name }}/fullchain.pem>
+{% endif %}
 
 <VirtualHost _default_:443>
 
@@ -23,12 +44,121 @@ ServerAdmin info@ebookfoundation.org
 SSLEngine on
 SSLProtocol All -SSLv2 -SSLv3
 
+{% if manage_certs | default(true) %}
 SSLCertificateFile    /etc/ssl/certs/{{ server_name }}.crt
 SSLCertificateKeyFile /etc/ssl/private/server.key
 SSLCertificateChainFile /etc/ssl/certs/{{ server_name }}.ca-bundle
+{% else %}
+# Cert managed externally (e.g., by certbot's systemd timer). See the host's
+# group_vars/<env>/vars.yml comment on manage_certs for the rotation story.
+SSLCertificateFile    /etc/letsencrypt/live/{{ server_name }}/fullchain.pem
+SSLCertificateKeyFile /etc/letsencrypt/live/{{ server_name }}/privkey.pem
+{% endif %}
 
-WSGIDaemonProcess regluit processes=2 threads=15 python-eggs=/tmp/regluit-python-eggs
-WSGIScriptAlias / /opt/regluit/deploy/prod.wsgi
+WSGIDaemonProcess regluit processes={{ wsgi_processes | default(2) }} threads={{ wsgi_threads | default(15) }} maximum-requests={{ wsgi_maximum_requests | default(500) }} inactivity-timeout={{ wsgi_inactivity_timeout | default(300) }} graceful-timeout={{ wsgi_graceful_timeout | default(30) }} display-name=%{GROUP} python-eggs=/tmp/regluit-python-eggs
+# Delegate the app to the "regluit" daemon process group so it runs in the
+# 2 managed daemon processes (where maximum-requests recycling applies),
+# NOT embedded in the apache mpm children. Without this the WSGIDaemonProcess
+# above is defined-but-unused and the app silently runs embedded
+# (root cause of the 2026-06-22 OOM; Gluejar/regluit#1078).
+WSGIScriptAlias / /opt/regluit/deploy/prod.wsgi process-group=regluit application-group=%{GLOBAL}
+WSGIProcessGroup regluit
+# Run the app in the MAIN Python interpreter, not a mod_wsgi sub-interpreter.
+# Django 4.x template-based form rendering (RenderableMixin) misbehaves in
+# sub-interpreters: empty form error lists (form.x.errors,
+# form.non_field_errors) stringify to a literal "[]" instead of "".
+# Reproduced on Django 4.2.21 under mod_wsgi 5.0.0 (regluit#1163); fixed by
+# forcing the global/main interpreter. Harmless for a single-app daemon and a
+# long-standing mod_wsgi best practice for C-extension/threading correctness.
+WSGIApplicationGroup %{GLOBAL}
+
+# --- Maintenance mode (flag-file toggle; no apache reload needed) ----------
+# ON:   sudo touch /var/www/maintenance/MAINTENANCE_ON
+# OFF:  sudo rm /var/www/maintenance/MAINTENANCE_ON
+# While the flag file exists, every request (except the maintenance page
+# itself and /static/) gets a 503 + Retry-After, served as a static page
+# with no Django/WSGI/database involvement.
+Alias /maintenance.html /var/www/maintenance/maintenance.html
+<Directory /var/www/maintenance>
+  Require all granted
+</Directory>
+RewriteEngine On
+RewriteCond /var/www/maintenance/MAINTENANCE_ON -f
+RewriteCond %{REQUEST_URI} !^/maintenance\.html$
+RewriteCond %{REQUEST_URI} !^/static/
+RewriteRule ^ - [R=503,L]
+ErrorDocument 503 /maintenance.html
+Header always set Retry-After "600" "expr=%{REQUEST_STATUS} == 503"
+# ---------------------------------------------------------------------------
+
+# --- Crawler-trap guard (2026-07-10 incident) -------------------------------
+# Every page's footer links to /feedback/?page=<current-url> — including the
+# feedback page itself, so feedback pages link to feedback-pages-about-
+# feedback-pages: an infinite, self-multiplying URL space. Bot fleets
+# (~8k IPs, spoofed desktop-Chrome UAs, ignoring robots.txt) crawled it at
+# ~60k req/hr on 2026-07-10, pegging all wsgi daemons (load avg 13-16,
+# 17-31s TTFB sitewide). Serve a cheap static 403 before WSGI/Django sees it.
+#
+# Rule 1: /feedback/ request whose query string embeds an encoded /feedback
+#         URL (any encoding depth) = recursion. First-level
+#         /feedback/?page=<some-page> from a real user still works.
+RewriteCond %{REQUEST_URI} ^/feedback/ [NC]
+RewriteCond %{QUERY_STRING} (%2F|%252F)feedback [NC]
+RewriteRule ^ - [F]
+# Rule 2 (any path): a triple-encoded slash (%25252F) in a query string means
+#         a URL nested >= 3 levels deep via ?page=/?next= chains. No link the
+#         app emits for direct human use is ever triple-encoded.
+RewriteCond %{QUERY_STRING} %25252F [NC]
+RewriteRule ^ - [F]
+# ---------------------------------------------------------------------------
+
+# --- Datacenter crawler-fleet block (2026-07-10 incident) -------------------
+# ~59% of the 2026-07-10 flood came from Tencent Cloud international ranges
+# (ACEVILLE PTE.LTD = Tencent, 43.128.0.0/10): thousands of IPs, spoofed
+# desktop-Chrome User-Agents, ignoring robots.txt, carpet-crawling /work/
+# pages at ~600 req/min and pegging all 4 cores. Cheap 403 at the apache
+# layer. Revert = delete this stanza and rerun --tags apache-config.
+RewriteCond expr "-R '43.128.0.0/10'"
+RewriteRule ^ - [F]
+# Round 2 (same day, ~13:15 PDT): fleet shifted weight to sibling datacenter
+# ranges. All whois-verified TencentCloud/ACEVILLE or Alibaba Cloud:
+RewriteCond expr "-R '49.51.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '119.28.0.0/15'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '129.226.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '170.106.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '101.32.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '150.109.0.0/16'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '8.208.0.0/12'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '47.240.0.0/14'"
+RewriteRule ^ - [F]
+RewriteCond expr "-R '47.244.0.0/15'"
+RewriteRule ^ - [F]
+# Rogue scraper: "OAPEN-DOAB-TXT-Downloader/2.1 (personal research use)" —
+# single ISP IP, 23k req/day, wedged in the feedback trap via double-encoded
+# /password/reset/?next= chains that the recursion rules deliberately allow.
+RewriteCond %{HTTP_USER_AGENT} "OAPEN-DOAB-TXT-Downloader" [NC]
+RewriteRule ^ - [F]
+# NOT blocked (self-identified, robots.txt-honoring, modest rate — Eric's
+# call, since AI/SEO discoverability may serve the mission): GPTBot,
+# ClaudeBot, DotBot, meta-webindexer.
+#
+# Round 3 (2026-07-12 ~23:15 PDT surge): the distributed long-tail botnet
+# (2,200+ IPs in one 8k-line log window, unblockable by CIDR) resurged and
+# pegged all 4 cores (load 17, TTFB 21-24s). Its fingerprint: spoofed
+# desktop-Chrome UAs claiming versions 103-133 — real Chrome auto-updates,
+# so a July-2026 UA claiming Chrome <134 is years stale. Genuine users in
+# the same window: Chrome 142-146 (~1% of hits). Blocks 100-133; the spared
+# bots (GPTBot/ClaudeBot/Meta/Googlebot/DotBot) do not use these UA strings.
+RewriteCond %{HTTP_USER_AGENT} "Chrome/1([0-2][0-9]|3[0-3])\." [NC]
+RewriteRule ^ - [F]
+# ---------------------------------------------------------------------------
 
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
 # intermediate mode
@@ -69,6 +199,13 @@ BrowserMatch "MSIE [17-9]" ssl-unclean-shutdown
 
 ErrorLog "|/usr/bin/cronolog /var/log/apache2/%Y%m%d_error.log"
 LogLevel warn
-CustomLog "|/usr/bin/cronolog /var/log/apache2/%Y%m%d_access.log" combined
+# "combined" plus %D (time to serve the request, in microseconds).
+# %D is appended LAST so every existing field keeps its position and any
+# tooling that parses these logs positionally continues to work unchanged.
+LogFormat "%h %l %u %t \"%r\" %>s %O \"%{Referer}i\" \"%{User-Agent}i\" %D" combined_time
+CustomLog "|/usr/bin/cronolog /var/log/apache2/%Y%m%d_access.log" combined_time
 
 </VirtualHost>
+{% if certbot_manage | default(false) | bool %}
+</IfFile>
+{% endif %}

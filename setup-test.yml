@@ -1,4 +1,4 @@
-- hosts: regluit-prod
+- hosts: regluit-test
   gather_facts: false
   tasks:
   # Ansible needs two things on the target before its modules work: a python3

@@ -1,0 +1,147 @@
+---
+# See tasks/certs.yml. First issuance works on a fresh box because the HTTPS
+# vhost is wrapped in <IfFile> when certbot_manage is on (apache.conf.j2):
+# apache can start with only the port-80 vhost, serve the challenge, and pick
+# up the HTTPS vhost once the certificate exists.
+
+- name: Install certbot
+  become: yes
+  apt:
+    name: certbot
+    state: present
+  tags: [certs]
+
+- name: Create the ACME challenge webroot
+  become: yes
+  file:
+    path: "{{ certbot_webroot }}/.well-known/acme-challenge"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [certs]
+
+# The certbot package does not create this; certbot itself does on first run.
+- name: Create the certbot deploy-hook directory
+  become: yes
+  file:
+    path: /etc/letsencrypt/renewal-hooks/deploy
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [certs]
+
+# Without this, certbot renews the files and apache keeps serving the old
+# certificate until someone reloads it by hand (2026-08-18 incident).
+- name: Install certbot deploy hook that reloads apache
+  become: yes
+  copy:
+    dest: /etc/letsencrypt/renewal-hooks/deploy/reload-apache.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/sh
+      # Reload Apache so a renewed certificate is actually served.
+      # Managed by regluit-provisioning (roles/regluit_prod/tasks/certs_certbot.yml).
+      set -e
+      if apache2ctl configtest >/dev/null 2>&1; then
+          systemctl reload apache2
+      else
+          echo "apache2ctl configtest FAILED - not reloading" >&2
+          exit 1
+      fi
+  tags: [certs]
+
+- name: Check whether this host already has its certificate
+  become: yes
+  stat:
+    path: "/etc/letsencrypt/live/{{ server_name }}/fullchain.pem"
+  register: certbot_cert
+  tags: [certs]
+
+# Whether an existing certificate's stored renewal settings are compatible
+# with the challenge Alias apache.conf.j2 writes is checked in
+# tasks/certs_precheck.yml, which runs BEFORE apache.yml rewrites the config.
+# By the time this file runs, that has already passed.
+
+# First issuance only. apache has to be running the rendered config (port-80
+# challenge alias) before Let's Encrypt fetches the challenge, and the
+# restart handler has not run yet at this point in the play.
+- name: Check apache config before restarting for first issuance
+  become: yes
+  command: apache2ctl configtest
+  changed_when: false
+  when: not certbot_cert.stat.exists
+  tags: [certs]
+
+- name: Restart apache so the challenge path is live
+  become: yes
+  service:
+    name: apache2
+    state: restarted
+  when: not certbot_cert.stat.exists
+  tags: [certs]
+
+- name: Obtain the certificate (webroot)
+  become: yes
+  command:
+    argv: "{{ ['certbot', 'certonly', '--non-interactive', '--agree-tos',
+               '--email', certbot_email, '--webroot', '-w', certbot_webroot,
+               '--cert-name', server_name, '-d', server_name]
+              + (['-d', alt_server_name] if alt_server_name | default('') != '' else []) }}"
+  when: not certbot_cert.stat.exists
+  notify:
+    - validate apache config
+    - restart apache
+  tags: [certs]
+
+# Flush now, so the certificate this run just issued is actually being served
+# before the play continues. Without it the <IfFile> guard was evaluated while
+# the certificate was still absent, the 443 vhost stayed unloaded until the
+# end-of-play flush, and a failure in any later role file (celery, cron,
+# monitoring, log_management, patching) left the box with a certificate on disk
+# and nothing answering on 443 -- with the assert below already passed. This is
+# also what makes that assert mean what its message says. (Review of #78.)
+- name: Serve the new certificate before continuing
+  ansible.builtin.meta: flush_handlers
+
+- name: Keep the certbot renewal timer enabled
+  become: yes
+  ansible.builtin.systemd:
+    name: certbot.timer
+    enabled: yes
+    state: started
+  tags: [certs]
+
+# The <IfFile> wrapper in apache.conf.j2 makes a missing certificate quiet
+# rather than fatal: apache starts, configtest passes, port 80 redirects to an
+# https endpoint that is not listening, and nothing in the play fails. That is
+# the right trade for first boot, but it needs a check. The likeliest cause is
+# a run-time `-e server_name=` that does not match the issued lineage.
+# (Found by review of #78.)
+- name: A certbot host must end the play with a certificate in place
+  become: yes
+  stat:
+    path: "/etc/letsencrypt/live/{{ server_name }}/fullchain.pem"
+  register: certbot_cert_final
+  check_mode: false
+  tags: [certs]
+
+# Skipped under --check: the certonly task above is a command, which --check
+# never runs, so on a certless host the certificate legitimately is not there
+# and this would fail with a misleading message about server_name.
+- name: Fail if the HTTPS vhost would be silently skipped
+  ansible.builtin.assert:
+    that:
+      - certbot_cert_final.stat.exists
+    fail_msg: >-
+      No certificate at /etc/letsencrypt/live/{{ server_name }}/fullchain.pem,
+      so apache.conf.j2's <IfFile> guard drops the whole HTTPS vhost: the box
+      would start, pass configtest, redirect port 80 to https, and serve
+      nothing on 443. Check that server_name ({{ server_name }}) matches the
+      certificate lineage certbot actually issued.
+    success_msg: "Certificate present, so the HTTPS vhost is active."
+  when: not ansible_check_mode
+  tags: [certs]

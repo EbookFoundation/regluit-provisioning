@@ -16,3 +16,7 @@ broker_url: "redis://localhost:6379//"
 boxstream_api_key: "012345678901234567890123456789"
 boxstream_api_user: "user"
 dropbox_key: "012345678901234"
+
+# Untested: the hosts this role served are dead (2026-08-30). Kept at the
+# value these tasks were written for; see roles/regluit_prod for the live role.
+python_version: "3.8"

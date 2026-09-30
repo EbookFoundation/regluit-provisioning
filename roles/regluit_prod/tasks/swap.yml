@@ -1,0 +1,64 @@
+---
+# Swap file — memory-pressure cushion (Gluejar/regluit#1078).
+# The box has NO swap by default, so a memory spike goes straight to OOM/thrash
+# and a hard wedge. A modest swapfile lets the kernel ride out spikes and the
+# OOM-killer act cleanly. This is a *cushion*, not the cure — the real fix is
+# daemon-mode worker recycling (WSGIDaemonProcess maximum-requests + the
+# WSGIProcessGroup delegation in templates/apache.conf.j2). Keep swappiness low
+# so RAM stays primary and swap is used only under pressure.
+
+- name: Create swap file ({{ swap_file_size_mb | default(4096) }} MB)
+  become: yes
+  command: "fallocate -l {{ swap_file_size_mb | default(4096) }}M {{ swap_file_path | default('/swapfile') }}"
+  args:
+    creates: "{{ swap_file_path | default('/swapfile') }}"
+
+- name: Secure swap file permissions (0600)
+  become: yes
+  ansible.builtin.file:
+    path: "{{ swap_file_path | default('/swapfile') }}"
+    owner: root
+    group: root
+    mode: "0600"
+
+# Idempotent format: only mkswap if the file has no swap signature yet.
+- name: Detect existing swap signature
+  become: yes
+  command: "blkid -p -s TYPE -o value {{ swap_file_path | default('/swapfile') }}"
+  register: swap_blkid
+  changed_when: false
+  failed_when: false
+
+- name: Format swap file
+  become: yes
+  command: "mkswap {{ swap_file_path | default('/swapfile') }}"
+  when: "'swap' not in (swap_blkid.stdout | default(''))"
+
+# Idempotent activation: only swapon if this file isn't already an active swap.
+- name: Check active swap devices
+  become: yes
+  command: "swapon --show=NAME --noheadings"
+  register: swap_active
+  changed_when: false
+
+- name: Enable swap file now
+  become: yes
+  command: "swapon {{ swap_file_path | default('/swapfile') }}"
+  when: "(swap_file_path | default('/swapfile')) not in (swap_active.stdout | default(''))"
+
+- name: Persist swap in /etc/fstab
+  become: yes
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    line: "{{ swap_file_path | default('/swapfile') }} none swap sw 0 0"
+    regexp: "^{{ swap_file_path | default('/swapfile') | regex_escape }}\\s"
+    state: present
+
+- name: Tune vm.swappiness (prefer RAM; swap only under pressure)
+  become: yes
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ vm_swappiness | default(10) }}"
+    state: present
+    sysctl_set: yes
+    reload: yes

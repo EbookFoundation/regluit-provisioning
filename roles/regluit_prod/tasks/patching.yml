@@ -1,0 +1,44 @@
+---
+# OS security patching + automatic reboot policy.
+#
+# unattended-upgrades was already installed/enabled (Ubuntu default) and IS
+# correctly auto-installing security-origin package updates daily. The gap:
+# kernel security updates need a reboot to take effect, and there was no
+# Automatic-Reboot configured, so the box would sit in a permanent
+# "System restart required" state until a human happened to notice the
+# login banner and manually rebooted (found 2026-07-01: box was 9+ days
+# without a reboot despite a kernel security update having been installed
+# days earlier).
+#
+# Fix: a dedicated drop-in conf.d file (NOT editing the package-managed
+# 50unattended-upgrades directly — that file can be overwritten by future
+# unattended-upgrades package upgrades) that enables Automatic-Reboot at a
+# fixed low-traffic time. Window chosen to avoid the existing 3:00-3:25 UTC
+# log-cleanup cron block and the 4:30 UTC DOAB harvest cron (see cron.yml).
+
+- name: Install automatic-reboot policy for unattended-upgrades
+  become: yes
+  template:
+    src: 51-automatic-reboot.j2
+    dest: /etc/apt/apt.conf.d/51-automatic-reboot
+    owner: root
+    group: root
+    mode: "0644"
+  tags: [config]
+
+- name: Ensure unattended-upgrades service is enabled
+  become: yes
+  ansible.builtin.systemd:
+    name: unattended-upgrades
+    enabled: yes
+    state: started
+
+- name: Ensure apt-daily and apt-daily-upgrade timers are enabled
+  become: yes
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: yes
+    state: started
+  with_items:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer

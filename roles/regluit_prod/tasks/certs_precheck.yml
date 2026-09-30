@@ -1,0 +1,186 @@
+---
+# Certificate checks that MUST run before the "Create apache config" task in
+# tasks/apache.yml rewrites /etc/apache2/sites-available/prod.conf.
+#
+# Why the ordering matters: apache.conf.j2's port-80 vhost aliases
+# /.well-known/acme-challenge to certbot_webroot when certbot_manage is on, and
+# an Alias shadows the document root for that path. If a host's stored renewal
+# settings point somewhere else, that Alias breaks unattended renewal -- and
+# the only signal is certbot's own mail, so it stays silent until the
+# certificate expires. Checking from tasks/certs.yml (which runs AFTER
+# apache.yml) would fail the play with the incompatible config already on disk,
+# where the next restart -- from a handler or from deploy.yml -- activates it.
+#
+# This file is imported from tasks/apache.yml immediately before that render
+# and carries the render's own tags, so no tagged run can rewrite prod.conf
+# without it. Do not move it back into main.yml as a separate import: it then
+# has to repeat the render's tag list, and that drifted once already
+# (--tags oom-hardening selected the render and not the check).
+#
+# Everything here is read-only and makes no network call. The read-only
+# commands carry check_mode: false so that --check reports the truth instead of
+# skipping them and then judging their empty output.
+#
+# Codex review rounds 3-6 on regluit-provisioning#78.
+
+- name: manage_certs and certbot_manage are mutually exclusive
+  ansible.builtin.assert:
+    that:
+      - not (manage_certs | default(true) | bool and certbot_manage | default(false) | bool)
+    fail_msg: >-
+      Both manage_certs and certbot_manage are on for {{ inventory_hostname }}.
+      A host uses at most one certificate flow; a certbot host needs
+      manage_certs: false (see group_vars/test).
+    success_msg: "One certificate flow at most, as required."
+
+- name: Check whether this host already has a certificate
+  become: yes
+  stat:
+    path: "/etc/letsencrypt/live/{{ server_name }}/fullchain.pem"
+  register: certbot_precheck_cert
+  check_mode: false
+  when: certbot_manage | default(false) | bool
+
+# A host with no certificate yet has nothing to reconcile: the issuance task in
+# certs_certbot.yml writes the renewal config itself, from certbot_webroot. So
+# everything below is guarded on the lineage already existing.
+
+# Read the renewal config with certbot's OWN parser (ConfigObj, a dependency of
+# the certbot package) rather than matching patterns against the text. Three
+# review rounds found the hand-written version accepting configurations certbot
+# reads differently -- quoted keys, quoted values, inline comments, list values,
+# and a comma inside a quoted value. See
+# files/certbot_renewal_probe.py and tests/certbot_renewal_probe_test.py.
+- name: Ask certbot's own parser for the effective renewal settings
+  become: yes
+  # ansible.builtin.script has no argv form, so cmd goes through the remote
+  # shell. server_name and alt_server_name are operator-set (group_vars or
+  # -e), and `-e server_name=...` is a pattern this repo uses, so quote them:
+  # a value with a space or a semicolon would otherwise be split or run.
+  ansible.builtin.script:
+    cmd: >-
+      certbot_renewal_probe.py
+      {{ ('/etc/letsencrypt/renewal/' ~ server_name ~ '.conf') | quote }}
+      {{ ([server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []))
+         | map('quote') | join(' ') }}
+    executable: /usr/bin/python3
+  register: certbot_renewal_probe
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - certbot_manage | default(false) | bool
+    - certbot_precheck_cert.stat.exists | default(false)
+
+# The five expressions below are duplicated, on purpose, in
+# tests/certs_precheck_verdict_cases.yml -- Ansible offers no way to exercise a
+# task file's vars with a stubbed register. Edit them together or the test goes
+# on passing while this stops working. That test is what caught the CR bug
+# described above, so it is worth the duplication.
+- name: The stored renewal settings must match the webroot the vhost serves
+  vars:
+    # Ansible's script action runs over a pseudo-terminal, so stdout comes back
+    # with CRLF line endings. Without stripping the CR it lands inside the
+    # captures below and every equality check fails on a CORRECT config.
+    # Note the YAML style: this is a FOLDED (>-) scalar, not a double-quoted
+    # one, so '\r' reaches Jinja as the two-character escape and matches a
+    # carriage return. In a double-quoted scalar YAML would turn '\r' into a
+    # real CR first, and Jinja normalises a raw CR in template source to a
+    # newline -- so the pattern would strip NEWLINES and collapse the output
+    # into a single line. Both spellings are exercised by
+    # tests/certs_precheck_verdict_cases.yml, which is how that was caught.
+    probe_out: >-
+      {{ certbot_renewal_probe.stdout | default('') | regex_replace('\r', '') }}
+    probe_authenticator: >-
+      {{ probe_out | regex_search('^authenticator=(.*)$', '\1', multiline=True)
+         | default([], true) | first | default('') }}
+    expected_domains: >-
+      {{ [server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []) }}
+    # the probe prints one `webroot=<domain> <effective root>` line per domain
+    probe_webroots: >-
+      {{ dict(probe_out | regex_findall('^webroot=(\S+) (.*)$', multiline=True)) }}
+    domains_pointing_at_us: >-
+      {{ probe_webroots | dict2items | selectattr('value', 'equalto', certbot_webroot)
+         | map(attribute='key') | list }}
+    wrong_webroots: "{{ expected_domains | reject('in', domains_pointing_at_us) | list }}"
+  ansible.builtin.assert:
+    that:
+      - certbot_renewal_probe.rc | default(1) | int == 0
+      - probe_authenticator == 'webroot'
+      - wrong_webroots | length == 0
+    fail_msg: >-
+      {{ server_name }} already has a certificate, but its renewal config
+      (/etc/letsencrypt/renewal/{{ server_name }}.conf) could not be read, does
+      not use the webroot authenticator (it says
+      '{{ probe_authenticator | default('?', true) }}'), or does not resolve
+      {{ wrong_webroots | join(', ') | default('every name', true) }}
+      to {{ certbot_webroot }} -- the only path the port-80 vhost serves ACME
+      challenges from. Effective webroots, as certbot's own parser reads them:
+      {{ probe_webroots }}.
+      {{ certbot_renewal_probe.stderr | default('') | trim }}
+      Unattended renewal would fail silently, so this stops before apache's
+      config is rewritten. Reconcile it on the host with certbot's own command
+      for exactly this (certbot >= 2.3; Ubuntu 24.04 ships 2.9) --
+      `certonly --keep-until-expiring` will NOT do it, because it returns
+      without saving renewal settings when the certificate is not yet due:
+      certbot reconfigure --cert-name {{ server_name }}
+      --preferred-challenges http --webroot -w {{ certbot_webroot }}
+    success_msg: >-
+      Stored renewal settings resolve {{ expected_domains | join(', ') }}
+      to {{ certbot_webroot }}.
+  when:
+    - certbot_manage | default(false) | bool
+    - certbot_precheck_cert.stat.exists | default(false)
+
+# Resolving the webroot says renewal will work; it says nothing about which
+# names the certificate actually covers. Issuance in certs_certbot.yml is
+# skipped whenever the lineage exists, so adding alt_server_name to a host that
+# already has a single-name certificate would leave the alt hostname served by
+# a certificate that does not include it -- and renewal preserves the existing
+# names, so it never self-corrects.
+- name: Read the names on the installed certificate
+  become: yes
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - x509
+      - -in
+      - "/etc/letsencrypt/live/{{ server_name }}/fullchain.pem"
+      - -noout
+      - -ext
+      - subjectAltName
+  register: certbot_cert_sans
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  when:
+    - certbot_manage | default(false) | bool
+    - certbot_precheck_cert.stat.exists | default(false)
+
+- name: The installed certificate must cover every name the vhost serves
+  vars:
+    cert_names: >-
+      {{ certbot_cert_sans.stdout | default('') | regex_replace('\r', '')
+         | regex_findall('DNS:([A-Za-z0-9.*-]+)') | map('lower') | list }}
+    expected_domains: >-
+      {{ [server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []) }}
+    uncovered_domains: "{{ expected_domains | map('lower') | reject('in', cert_names) | list }}"
+  ansible.builtin.assert:
+    that:
+      - certbot_cert_sans.rc | default(1) | int == 0
+      - uncovered_domains | length == 0
+    fail_msg: >-
+      The certificate at /etc/letsencrypt/live/{{ server_name }}/ does not
+      cover {{ uncovered_domains | join(', ') | default('(names unreadable)', true) }}.
+      It covers: {{ cert_names | join(', ') | default('(unreadable)', true) }}.
+      Because the lineage already exists, the issuance task will be skipped, so
+      the uncovered name would be served a certificate that does not include it
+      and renewal would never add it. Expand the certificate on the host first:
+      certbot certonly --non-interactive --webroot -w {{ certbot_webroot }}
+      --cert-name {{ server_name }} --expand
+      {{ expected_domains | map('regex_replace', '^', '-d ') | join(' ') }}
+    success_msg: >-
+      Certificate covers {{ expected_domains | join(', ') }}.
+  when:
+    - certbot_manage | default(false) | bool
+    - certbot_precheck_cert.stat.exists | default(false)
