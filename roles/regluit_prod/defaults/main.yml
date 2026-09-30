@@ -32,3 +32,29 @@ email_safe_mode_redirect_to: ""
 certbot_manage: false
 certbot_webroot: /var/lib/letsencrypt
 certbot_email: support@ebookfoundation.org
+
+# Apache timeouts (templates/regluit-timeouts.conf.j2, issue #81). Before this,
+# the box ran Ubuntu's stock values, which no playbook set.
+#
+# Timeout: how long Apache waits on a single read or write before giving up.
+# It is an idle limit per I/O, not a cap on the whole response, so a slow
+# download that keeps moving is not cut off. Stock is 300. It also sets how
+# long Apache waits for the mod_wsgi daemon to answer (mod_wsgi's socket-timeout
+# defaults to it), so a Django page slower than this gets a 504; the Django
+# thread keeps running until the view returns.
+apache_timeout: 60
+
+# mod_reqtimeout limits for the stages before Django sees a request. Stock
+# Ubuntu sets header and body only; the handshake stage (TLS setup) is off, so
+# a client that connects and stalls mid-handshake holds a worker for the full
+# Timeout. Seen on prod 2026-09-30: ~100 of 150 workers stuck in "reading
+# request", most for longer than the 40 s header limit (security-private#33).
+# Format: stage=seconds[-max_seconds][,MinRate=bytes_per_second], per stage.
+apache_request_read_timeout: "handshake=10-20,MinRate=500 header=20-40,MinRate=500 body=10,MinRate=500"
+
+# Sources to drop at the firewall (tasks/main.yml, ufw). Empty = no change.
+# Needs ufw to be active on the host; the play stops with a message if it is
+# not, rather than adding rules that do nothing. Removing an entry here does
+# NOT remove its rule; delete it by hand (`ufw delete deny from <cidr>`).
+firewall_blocked_sources: []
+# - 114.94.100.136/32   # held 15+ stalled connections on prod, 2026-09-30

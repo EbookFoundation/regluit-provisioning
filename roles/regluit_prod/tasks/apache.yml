@@ -38,6 +38,40 @@
   notify:
     - reload apache
 
+# Timeout and RequestReadTimeout (#81): regluit-timeouts.conf.j2 and
+# defaults/main.yml say why. mod_reqtimeout is on in stock Ubuntu; enabling
+# it here makes that explicit, and without it the RequestReadTimeout line
+# would fail the configtest rather than be silently ignored.
+- name: Enable mod_reqtimeout
+  become: yes
+  tags: [apache-config]
+  command: a2enmod reqtimeout
+  args:
+    creates: /etc/apache2/mods-enabled/reqtimeout.load
+  notify:
+    - restart apache
+
+- name: Install apache timeouts config
+  become: yes
+  tags: [apache-config]
+  template:
+    src: regluit-timeouts.conf.j2
+    dest: /etc/apache2/conf-available/regluit-timeouts.conf
+    owner: root
+    group: root
+    mode: 0644
+  notify:
+    - reload apache
+
+- name: Enable apache timeouts config
+  become: yes
+  tags: [apache-config]
+  command: a2enconf regluit-timeouts
+  args:
+    creates: /etc/apache2/conf-enabled/regluit-timeouts.conf
+  notify:
+    - reload apache
+
 - name: Create static directory
   become: yes
   file: 
