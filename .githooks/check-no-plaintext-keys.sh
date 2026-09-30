@@ -18,6 +18,9 @@ set -euo pipefail
 
 EXIT_CODE=0
 
+# ansible-vault 1.1/1.2 header; 1.2 appends ';<vault-id>'.
+VAULT_HEADER_RE='^\$ANSIBLE_VAULT;1\.[12];AES256(;.*)?$'
+
 for file in "$@"; do
     # Skip files that don't exist (deletions)
     [ -f "$file" ] || continue
@@ -25,18 +28,17 @@ for file in "$@"; do
     # Read first line
     first_line=$(head -n 1 "$file" 2>/dev/null || echo "")
 
-    # Files prefixed with $ANSIBLE_VAULT are encrypted — allowed
-    case "$first_line" in
-        '$ANSIBLE_VAULT'*)
-            continue
-            ;;
-    esac
+    # Files with a valid ansible-vault header are encrypted — allowed.
+    # Match the full header, not just the prefix, so a first line like
+    # "$ANSIBLE_VAULT_NOT_REALLY" doesn't exempt a plaintext key below it.
+    if [[ "$first_line" =~ $VAULT_HEADER_RE ]]; then
+        continue
+    fi
 
     # Check for PEM private key markers anywhere in the file.
     # Matches RSA, EC, DSA, OPENSSH, ENCRYPTED, etc.
     if grep -qE -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----' "$file"; then
         echo "ERROR: $file contains a PEM private key but is not ansible-vault encrypted." >&2
-        echo "       First line: $first_line" >&2
         echo "" >&2
         echo "  To fix:" >&2
         echo "    ansible-vault encrypt \"$file\"" >&2
