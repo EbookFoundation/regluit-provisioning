@@ -208,6 +208,23 @@ MAINTENANCE_MODE = False
 # alongside an explicit STORAGES (4.2), and ignores it silently on 5.1+ (which
 # would drop S3). See Gluejar/regluit#1202 / #1203.
 
+# Shared cache for the OPDS feeds (regluit#1257). settings/common.py's
+# default cache is LocMemCache, private to each mod_wsgi process and lost
+# when it recycles, so a feed cached by one process is rebuilt by the other
+# three. The feeds (api/views.py) use CACHES['opds'] when it exists.
+# It is a separate alias on purpose: Django's Redis backend raises when Redis
+# is down, and some default-cache users (e.g. libraryauth/forms.py at import
+# time) do not catch that, while the feed code does. So a Redis outage costs
+# only the feed cache, not the site.
+# Redis is already here for Celery (DB 0 broker, DB 1 results, set in
+# common.py); this uses its own DB. Redis evicts only keys with an expiry
+# when full (tasks/redis.yml), so the cache can never push out Celery's queue.
+CACHES['opds'] = {
+    'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+    'LOCATION': {{ django_cache_redis_url | to_json }},
+    'KEY_PREFIX': {{ django_cache_key_prefix | to_json }},
+}
+
 # we should suppress Google Analytics outside of production
 SHOW_GOOGLE_ANALYTICS = True
 

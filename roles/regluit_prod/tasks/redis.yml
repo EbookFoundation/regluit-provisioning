@@ -11,3 +11,42 @@
     name: "redis-server"
     state: started
     enabled: yes
+
+# Memory cap + eviction policy; see redis_maxmemory_mb in defaults/main.yml
+# for why volatile-lru (regluit#1257). Listed policy first: if the box
+# currently has an allkeys-* policy, setting the cap before the policy could
+# evict Celery's queue in between.
+# The regexps match only uncommented directives; if none exists the line is
+# appended, and Redis uses the last occurrence of a directive, so the
+# appended line wins over any earlier one.
+- name: Persist Redis eviction policy and memory cap in redis.conf
+  become: yes
+  lineinfile:
+    path: /etc/redis/redis.conf
+    regexp: "^{{ item.name }}\\s"
+    line: "{{ item.name }} {{ item.value }}"
+  loop: "{{ redis_memory_settings }}"
+  tags: [config, redis]
+
+# Bring the running server in line without restarting it (a restart would
+# drop Celery's connections). Runs every time, so a manual CONFIG SET or a
+# half-finished earlier run is corrected. `-e` makes redis-cli exit non-zero
+# on an error reply, which it otherwise does not. Under --check it only
+# reads, and reports a mismatch as a change.
+- name: Apply Redis eviction policy and memory cap to the running server
+  become: yes
+  shell: |
+    set -eo pipefail
+    live="$(redis-cli -e CONFIG GET {{ item.name }} | tail -n 1)"
+    if [ "$live" = "{{ item.live }}" ]; then echo UNCHANGED; exit 0; fi
+    echo "was: $live"
+    if [ "{{ ansible_check_mode }}" != "True" ]; then
+      redis-cli -e CONFIG SET {{ item.name }} {{ item.value }}
+    fi
+  args:
+    executable: /bin/bash
+  loop: "{{ redis_memory_settings }}"
+  register: redis_live_apply
+  check_mode: false
+  changed_when: "'UNCHANGED' not in redis_live_apply.stdout"
+  tags: [config, redis]

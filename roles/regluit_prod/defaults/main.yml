@@ -32,3 +32,35 @@ email_safe_mode_redirect_to: ""
 certbot_manage: false
 certbot_webroot: /var/lib/letsencrypt
 certbot_email: support@ebookfoundation.org
+
+# Django's shared cache for the OPDS feeds, CACHES['opds'] (regluit#1257;
+# templates/prod.py.j2 says why it is not the default cache). Redis already
+# runs on the box as Celery's broker (DB 0) and result store (DB 1), both set
+# in the app's settings/common.py. The cache gets its own logical DB so
+# `redis-cli -n 2` shows only cache keys, and a KEY_PREFIX so it is
+# identifiable if it ever shares a DB with anything else.
+django_cache_redis_url: "redis://127.0.0.1:6379/2"
+django_cache_key_prefix: "regluit"
+
+# Redis memory cap and eviction policy (tasks/redis.yml). The cache shares
+# this Redis with Celery's queue, and the queue must never be evicted.
+# volatile-lru only evicts keys that carry an expiry: every feed cache entry
+# has one (an hour), and Celery's queue keys never do. So when the cap is
+# reached, cache entries go first and queued tasks are never dropped.
+# Celery's stored task results (DB 1) also expire (a day, Celery's default),
+# so they can be evicted too; the app reads a few back (core.models.CeleryTask,
+# e.g. LibraryThing import status), and an evicted one reads as PENDING.
+# The cap is far above what the app should use (the OPDS feed cache is on the
+# order of tens of MB at a 1-hour lifetime); it is there so a runaway cache
+# cannot eat the box's memory, not to squeeze Redis.
+# The one way this cap can hurt: if non-expiring keys (a large Celery backlog)
+# alone reach it, Redis refuses new writes, so new tasks fail to queue. Check
+# `redis-cli INFO memory` before lowering it. In megabytes (Redis's "mb",
+# 1024*1024 bytes).
+redis_maxmemory_mb: 256
+redis_maxmemory_policy: "volatile-lru"
+# Policy first, then cap (see tasks/redis.yml). `live` is how
+# `CONFIG GET` reports the value, for the idempotence check.
+redis_memory_settings:
+  - { name: "maxmemory-policy", value: "{{ redis_maxmemory_policy }}", live: "{{ redis_maxmemory_policy }}" }
+  - { name: "maxmemory", value: "{{ redis_maxmemory_mb }}mb", live: "{{ redis_maxmemory_mb | int * 1048576 }}" }
