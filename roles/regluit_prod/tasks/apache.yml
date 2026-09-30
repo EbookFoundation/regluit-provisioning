@@ -33,11 +33,9 @@
     group: "{{ user_name }}"
     mode: 0664
     backup: yes
-  # Reload, not restart: a graceful reload re-reads the vhost (including the
-  # WSGIDaemonProcess line) without refusing connections. The 2026-09-23
-  # --tags apache-config run restarted instead and SIGKILLed a worker (AH00046).
+  # Reload, not restart: a graceful reload re-reads the vhost, including the
+  # WSGIDaemonProcess line, without refusing connections.
   notify:
-    - validate apache config
     - reload apache
 
 - name: Create static directory
@@ -110,19 +108,11 @@
                         # OAuth, Turnstile) as env exports. no_log suppresses this
                         # task's normal result and diff output; it is not global
                         # redaction. Was the last such render in this role without it.
-  # Validation FIRST, then the restart. Under --tags config the "Create apache
-  # config" task above is skipped, so nothing else notifies "validate apache
-  # config" -- and a handler runs only when notified. Defining validate before
-  # restart in handlers/main.yml fixes their relative ORDER, it does not make
-  # validation a prerequisite. Without this line a tagged run could bounce
-  # apache without ever configtesting what is on disk, turning a working server
-  # into an outage if that config (or a cert path it names) is broken.
-  # (The validate handler now also `listen`s for restart/reload, so this line
-  # is belt-and-braces; kept so the dependency stays visible here.)
-  #
-  # Restart, not reload, is kept here deliberately: prod.wsgi is what the WSGI
-  # daemon loads, and the settings renders in tasks/main.yml (same `config` tag)
-  # notify restart anyway, which wins over reload in the same flush.
+  # Restart, not reload: prod.wsgi is what the WSGI daemon loads, and the
+  # settings renders in tasks/main.yml (same `config` tag) notify restart
+  # anyway. The configtest runs first because "validate apache config" listens
+  # for restart (handlers/main.yml), so a --tags config run can't bounce apache
+  # into a broken config.
   #
   # apache only: celeryd/celerybeat never load prod.wsgi, so notifying them here
   # would restart them for nothing -- not a no-op, just pointless. The host.py
@@ -132,7 +122,6 @@
   # daemon mode mod_wsgi may recycle the daemon on a later request when the
   # script file changes, which can happen before Ansible reaches its handlers.
   notify:
-    - validate apache config
     - restart apache
 
 - name: Remove apache2 logrotate file
