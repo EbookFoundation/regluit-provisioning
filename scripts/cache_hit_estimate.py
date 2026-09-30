@@ -14,6 +14,8 @@ LAST:
 Model and its limits (read before quoting a number):
 - Only GET with status 200 is replayed; everything else is skipped, which is
   also what the app caches.
+- Requests are replayed in %t order (Apache writes a line when the response
+  finishes, so file order is not quite arrival order).
 - First request for a URL is a miss and fills the cache at its arrival time;
   a later request within the lifetime is a hit and saves its own %D.
   (The real fill happens when the response finishes, so this slightly
@@ -24,9 +26,9 @@ Model and its limits (read before quoting a number):
   /api/opds* will drop; replaying a post-deploy log estimates what an ideal
   cache would still save beyond what the real one already does.
 
-Stdlib only, read-only. Prints counts only (no IPs, user agents or URLs).
+Stdlib only, read-only; holds the parsed 200 GETs in memory to sort them. Prints counts only (no IPs, user agents or URLs).
 Args: log paths (.gz ok, '-' for stdin) or YYYYMMDD dates
-(-> /var/log/apache2/YYYYMMDD_access.log, or .gz if rotated), in time order.
+(-> /var/log/apache2/YYYYMMDD_access.log, or .gz if rotated).
 
 Usage:
     ssh ubuntu@test.unglue.it 'python3 - 20260929' < scripts/cache_hit_estimate.py
@@ -96,7 +98,7 @@ def simulate(records, ttls):
     totals = defaultdict(lambda: {'req': 0, 'secs': 0.0, 'urls': set()})
     hits = {ttl: defaultdict(lambda: {'hits': 0, 'saved': 0.0}) for ttl in ttls}
     expiry = {ttl: {} for ttl in ttls}
-    for t, url, secs in records:
+    for t, url, secs in sorted(records):
         fam = family(url)
         tot = totals[fam]
         tot['req'] += 1

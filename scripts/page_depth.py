@@ -28,7 +28,7 @@ LINE = re.compile(
 BOT = re.compile(r'bot|crawl|spider|slurp|scrap|fetch|python|curl|wget|java|go-http|'
                  r'httpclient|okhttp|axios|libwww|headless|externalagent|preview', re.I)
 BROWSER = re.compile(r'^Mozilla/5\.0 .*(Chrome|Firefox|Safari|Edg)/')
-OWN_REFERER = re.compile(r'^https?://(www\.)?unglue\.it/')
+OWN_REFERER = re.compile(r'^https?://(www\.|test\.)?unglue\.it/')
 BUCKETS = [(1, 1), (2, 5), (6, 20), (21, 50), (51, 100), (101, None)]
 CLASSES = ('likely-human', 'browser-only', 'other')
 
@@ -51,16 +51,16 @@ def open_log(path):
 
 
 def page_of(query):
-    # Same rule as el_pagination: missing or non-integer means page 1.
+    # Same rule as el_pagination: missing or non-integer means page 1, and
+    # 0 or negative is served as page 1. Django reads the last of repeated values.
     try:
-        return int(parse_qs(query).get('work_list', ['1'])[0])
+        return max(1, int(parse_qs(query).get('work_list', ['1'])[-1]))
     except ValueError:
         return 1
 
 
 def bucket_of(page):
-    # Buckets are ascending, so the first that fits wins; 0 and negatives
-    # land on page 1, which is what the paginator serves for them.
+    # Buckets are ascending, so the first that fits wins.
     for lo, hi in BUCKETS:
         if hi is None or page <= hi:
             return (lo, hi)
@@ -86,9 +86,13 @@ def main(args):
                 if not m:
                     skipped += 1
                     continue
-                parsed += 1
                 ip, url, status, referer, ua, micros = m.groups()
-                parts = urlsplit(url)
+                try:
+                    parts = urlsplit(url)
+                except ValueError:  # e.g. an absolute-form target with a bad host
+                    skipped += 1
+                    continue
+                parsed += 1
                 if not parts.path.startswith('/free/') or parts.path.endswith('/marc/'):
                     continue
                 page = page_of(parts.query)

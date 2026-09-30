@@ -95,8 +95,9 @@ def parse_iso(s):
 
 def page_of(query):
     # Same rule as el_pagination: missing or non-integer means page 1.
+    # Django reads the last of repeated values.
     try:
-        return int(parse_qs(query).get('work_list', ['1'])[0])
+        return int(parse_qs(query).get('work_list', ['1'])[-1])
     except ValueError:
         return 1
 
