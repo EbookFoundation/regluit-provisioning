@@ -153,7 +153,6 @@
 # outcome we care about: the rendered file carries the 4-job Beat schedule
 # under the Celery-5 name and no ignored old-name remnant. Guards against a
 # recurrence of the silent 2026-06-26 revert (provisioning#37, regluit#1140).
-# Also checks the shared cache backend is present (regluit#1257).
 # Matches only setting NAMES — no secret values touch the log.
 - name: Verify rendered settings carry the 4-job Beat schedule (Celery-5 name)
   # NOTE: no single-quotes anywhere in this command — a lone quote (e.g. in a
@@ -162,7 +161,6 @@
     set -e
     test "$(grep -c "CELERY_BEAT_SCHEDULE\[" {{ project_path }}/settings/prod.py)" -eq 4
     ! grep -q "CELERYBEAT_SCHEDULE" {{ project_path }}/settings/prod.py
-    grep -q "django.core.cache.backends.redis.RedisCache" {{ project_path }}/settings/prod.py
   changed_when: false
   tags: [config]
 

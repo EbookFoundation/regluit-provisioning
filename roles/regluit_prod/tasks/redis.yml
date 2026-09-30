@@ -12,42 +12,41 @@
     state: started
     enabled: yes
 
-# Memory cap + eviction policy; see redis_maxmemory in defaults/main.yml for
-# why volatile-lru (regluit#1257). The regexps match only uncommented
-# directives; if none exists the line is appended, and Redis uses the last
-# occurrence of a directive, so the appended line wins over any earlier one.
-- name: Persist Redis memory cap and eviction policy in redis.conf
+# Memory cap + eviction policy; see redis_maxmemory_mb in defaults/main.yml
+# for why volatile-lru (regluit#1257). Listed policy first: if the box
+# currently has an allkeys-* policy, setting the cap before the policy could
+# evict Celery's queue in between.
+# The regexps match only uncommented directives; if none exists the line is
+# appended, and Redis uses the last occurrence of a directive, so the
+# appended line wins over any earlier one.
+- name: Persist Redis eviction policy and memory cap in redis.conf
   become: yes
   lineinfile:
     path: /etc/redis/redis.conf
     regexp: "^{{ item.name }}\\s"
     line: "{{ item.name }} {{ item.value }}"
-  loop:
-    - { name: "maxmemory", value: "{{ redis_maxmemory }}" }
-    - { name: "maxmemory-policy", value: "{{ redis_maxmemory_policy }}" }
-  register: redis_memory_conf
+  loop: "{{ redis_memory_settings }}"
   tags: [config, redis]
 
-# Apply the same values to the running server rather than restarting it, so
-# Celery's connections to Redis are not dropped for a settings change.
-- name: Apply Redis memory cap and eviction policy to the running server
+# Bring the running server in line without restarting it (a restart would
+# drop Celery's connections). Runs every time, so a manual CONFIG SET or a
+# half-finished earlier run is corrected. `-e` makes redis-cli exit non-zero
+# on an error reply, which it otherwise does not. Under --check it only
+# reads, and reports a mismatch as a change.
+- name: Apply Redis eviction policy and memory cap to the running server
   become: yes
-  command: "redis-cli CONFIG SET {{ item.name }} {{ item.value }}"
-  loop:
-    - { name: "maxmemory", value: "{{ redis_maxmemory }}" }
-    - { name: "maxmemory-policy", value: "{{ redis_maxmemory_policy }}" }
-  when: redis_memory_conf is changed
-  tags: [config, redis]
-
-# Catches drift the file check above cannot see, e.g. a manual CONFIG SET
-# since the last run. Reads settings only, so it also runs under --check,
-# where a mismatch is reported as a change (the apply above is skipped there)
-# rather than failing the whole check run.
-- name: Verify the running Redis evicts only keys that expire (volatile-lru)
-  become: yes
-  command: redis-cli CONFIG GET maxmemory-policy
-  register: redis_policy_live
+  shell: |
+    set -eo pipefail
+    live="$(redis-cli -e CONFIG GET {{ item.name }} | tail -n 1)"
+    if [ "$live" = "{{ item.live }}" ]; then echo UNCHANGED; exit 0; fi
+    echo "was: $live"
+    if [ "{{ ansible_check_mode }}" != "True" ]; then
+      redis-cli -e CONFIG SET {{ item.name }} {{ item.value }}
+    fi
+  args:
+    executable: /bin/bash
+  loop: "{{ redis_memory_settings }}"
+  register: redis_live_apply
   check_mode: false
-  changed_when: ansible_check_mode and redis_policy_live.stdout_lines[-1] | default('') != redis_maxmemory_policy
-  failed_when: not ansible_check_mode and redis_policy_live.stdout_lines[-1] | default('') != redis_maxmemory_policy
+  changed_when: "'UNCHANGED' not in redis_live_apply.stdout"
   tags: [config, redis]

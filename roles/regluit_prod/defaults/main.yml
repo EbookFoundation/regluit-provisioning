@@ -55,6 +55,12 @@ django_cache_key_prefix: "regluit"
 # cannot eat the box's memory, not to squeeze Redis.
 # The one way this cap can hurt: if non-expiring keys (a large Celery backlog)
 # alone reach it, Redis refuses new writes, so new tasks fail to queue. Check
-# `redis-cli INFO memory` before lowering it.
-redis_maxmemory: "256mb"
+# `redis-cli INFO memory` before lowering it. In megabytes (Redis's "mb",
+# 1024*1024 bytes).
+redis_maxmemory_mb: 256
 redis_maxmemory_policy: "volatile-lru"
+# Policy first, then cap (see tasks/redis.yml). `live` is how
+# `CONFIG GET` reports the value, for the idempotence check.
+redis_memory_settings:
+  - { name: "maxmemory-policy", value: "{{ redis_maxmemory_policy }}", live: "{{ redis_maxmemory_policy }}" }
+  - { name: "maxmemory", value: "{{ redis_maxmemory_mb }}mb", live: "{{ redis_maxmemory_mb | int * 1048576 }}" }
