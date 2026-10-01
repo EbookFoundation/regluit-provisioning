@@ -108,12 +108,13 @@ monitoring_alerts_enabled: true
 # Rule 51: 114.94.100.136/32
 #   What: China Telecom Shanghai. whois netname CHINANET-SH, inetnum
 #     114.80.0.0 - 114.95.255.255; no reverse DNS.
-#   Why: on 2026-09-30, while the site ran near its 150-worker limit with many
-#     Apache workers stuck in "reading request", this one address had 15
-#     connections open to prod at once (seen with `ss`). How many of the stuck
-#     workers it accounted for is not known: server-status's per-worker client
-#     and request fields can show a worker's previous request while it reads a
-#     new connection, so they can't attribute stuck workers to a client.
+#   Why: on 2026-09-30, during a pile-up of Apache workers stuck in "reading
+#     request", this one address had 15 connections open to prod at once
+#     (seen with `ss`). How many of the stuck workers it accounted for is not
+#     known: server-status's per-worker request fields (and, we believe but
+#     have not verified, its client field) can show a worker's previous
+#     request while it reads a new connection, so attributing stuck workers
+#     to a client from server-status is unreliable.
 #     The block made little difference; the handshake timeout in
 #     regluit-provisioning PR #91 is what ended the pile-ups. See also
 #     EbookFoundation/security-private#33.
