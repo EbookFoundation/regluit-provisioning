@@ -108,10 +108,14 @@ monitoring_alerts_enabled: true
 # Rule 51: 114.94.100.136/32
 #   What: China Telecom Shanghai. whois netname CHINANET-SH, inetnum
 #     114.80.0.0 - 114.95.255.255; no reverse DNS.
-#   Why: on 2026-09-30 this one address had 15 connections open to prod at
-#     once, and its /16 (114.94.x.x) held 67 of the 98 Apache workers stuck in
-#     "reading request" while the site ran near its 150-worker limit. See
-#     regluit-provisioning PR #91 (handshake timeout) and
+#   Why: on 2026-09-30, while the site ran near its 150-worker limit with many
+#     Apache workers stuck in "reading request", this one address had 15
+#     connections open to prod at once (seen with `ss`). How many of the stuck
+#     workers it accounted for is not known: server-status's per-worker client
+#     and request fields can show a worker's previous request while it reads a
+#     new connection, so they can't attribute stuck workers to a client.
+#     The block made little difference; the handshake timeout in
+#     regluit-provisioning PR #91 is what ended the pile-ups. See also
 #     EbookFoundation/security-private#33.
 #   Added: Raymond Yee (via Claude), 2026-09-30.
 #   Review: revisit by 2026-12-31. Remove it if the handshake timeout alone
