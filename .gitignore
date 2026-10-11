@@ -1,3 +1,6 @@
 *.retry
 private/certs/*
 private/decrypted/*
+
+# drift_check.sh output (local only; describe files are internal)
+drift/

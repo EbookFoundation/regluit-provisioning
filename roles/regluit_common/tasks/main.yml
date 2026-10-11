@@ -1,13 +1,25 @@
 ---
-# Need to install python3.8 and pip first so Ansible will function
-- name: Install python3.8 and pip for common
+# UNTESTED: the hosts this role served are dead (2026-08-30). Same bootstrap as
+# the top-level playbooks: python3 and python3-apt are checked separately and
+# installed only if missing, so "changed" is reported only when something was
+# installed. (Was: an unconditional apt install of python3.8-dev + python3-pip.)
+- name: Bootstrap - ensure python3 exists so Ansible modules can run
   become: true
-  raw: bash -c "apt -qqy update && apt install -qqy python3.8-dev python3-pip"
-  register: output
-  changed_when: output.stdout != ""
+  raw: test -x /usr/bin/python3 || (apt-get -qqy update && apt-get install -qqy python3 && echo BOOTSTRAP_INSTALLED)
+  register: bootstrap_python
+  changed_when: "'BOOTSTRAP_INSTALLED' in bootstrap_python.stdout"
+  tags: [bootstrap]
+
+- name: Bootstrap - ensure python3-apt exists so the apt module can run
+  become: true
+  raw: /usr/bin/python3 -c "import apt" 2>/dev/null || (apt-get -qqy update && apt-get install -qqy python3-apt && echo BOOTSTRAP_INSTALLED)
+  register: bootstrap_apt
+  changed_when: "'BOOTSTRAP_INSTALLED' in bootstrap_apt.stdout"
+  tags: [bootstrap]
 
 - name: Gathering Facts
   setup:
+  tags: [always]
 
 - name: Install base regluit dependencies
   become: true
@@ -30,7 +42,7 @@
 - name: Add project to PYTHONPATH of virtualenv
   template:
     src: "{{ item }}.j2"
-    dest: "{{ project_path }}/venv/lib/python3.8/site-packages/{{ item }}"
+    dest: "{{ project_path }}/venv/lib/python{{ python_version }}/site-packages/{{ item }}"
   with_items:
     - 'regluit.pth'
     - 'opt.pth'

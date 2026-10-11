@@ -12,6 +12,17 @@
     state: started
     enabled: yes
 
+# Runs immediately before the render below, and carries the SAME tag list, so
+# no tagged run can rewrite prod.conf without the check. If you add a tag to
+# "Create apache config", add it here too. See certs_precheck.yml for why the
+# check has to come first.
+- name: Certificate pre-checks (must precede the apache config render)
+  import_tasks: certs_precheck.yml
+  # The first two are the render's own tags, so no tagged run can rewrite
+  # prod.conf without the check. `certs` is here so a --tags certs run gets it
+  # as well, before certs_certbot.yml touches the certificate.
+  tags: [apache-config, oom-hardening, certs]
+
 - name: Create apache config
   become: yes
   # rate-limiting is here because this template is what writes the fixed-path
@@ -25,9 +36,44 @@
     group: "{{ user_name }}"
     mode: 0664
     backup: yes
+  # Reload, not restart: a graceful reload re-reads the vhost, including the
+  # WSGIDaemonProcess line, without refusing connections.
   notify:
-    - validate apache config
+    - reload apache
+
+# Timeout and RequestReadTimeout (#81): regluit-timeouts.conf.j2 and
+# defaults/main.yml say why. mod_reqtimeout is on in stock Ubuntu; enabling
+# it here makes that explicit, and without it the RequestReadTimeout line
+# would fail the configtest rather than be silently ignored.
+- name: Enable mod_reqtimeout
+  become: yes
+  tags: [apache-config]
+  command: a2enmod reqtimeout
+  args:
+    creates: /etc/apache2/mods-enabled/reqtimeout.load
+  notify:
     - restart apache
+
+- name: Install apache timeouts config
+  become: yes
+  tags: [apache-config]
+  template:
+    src: regluit-timeouts.conf.j2
+    dest: /etc/apache2/conf-available/regluit-timeouts.conf
+    owner: root
+    group: root
+    mode: 0644
+  notify:
+    - reload apache
+
+- name: Enable apache timeouts config
+  become: yes
+  tags: [apache-config]
+  command: a2enconf regluit-timeouts
+  args:
+    creates: /etc/apache2/conf-enabled/regluit-timeouts.conf
+  notify:
+    - reload apache
 
 - name: Create static directory
   become: yes
@@ -37,6 +83,32 @@
     owner: "{{ user_name }}"
     group: "{{ user_name }}"
     mode: 0755
+
+# Maintenance mode (ported from feature/prod-green 671d7d4). apache.conf.j2's
+# maintenance block and apache_liveness_watch.sh both use /var/www/maintenance/,
+# but until this port nothing on master created it, so a fresh build served a
+# bare 503 with no page. Toggle: sudo touch / rm /var/www/maintenance/MAINTENANCE_ON.
+# The flag file itself is never managed here, so a run never turns
+# maintenance mode on or off.
+- name: Create maintenance-mode directory
+  become: yes
+  tags: [apache-config]
+  file:
+    path: "/var/www/maintenance"
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0755
+
+- name: Install maintenance page
+  become: yes
+  tags: [apache-config]
+  template:
+    src: maintenance.html.j2
+    dest: "/var/www/maintenance/maintenance.html"
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: 0644
 
 - name: Create WSGI Script
   become: yes
@@ -73,13 +145,11 @@
                         # OAuth, Turnstile) as env exports. no_log suppresses this
                         # task's normal result and diff output; it is not global
                         # redaction. Was the last such render in this role without it.
-  # Validation FIRST, then the restart. Under --tags config the "Create apache
-  # config" task above is skipped, so nothing else notifies "validate apache
-  # config" -- and a handler runs only when notified. Defining validate before
-  # restart in handlers/main.yml fixes their relative ORDER, it does not make
-  # validation a prerequisite. Without this line a tagged run could bounce
-  # apache without ever configtesting what is on disk, turning a working server
-  # into an outage if that config (or a cert path it names) is broken.
+  # Restart, not reload: prod.wsgi is what the WSGI daemon loads, and the
+  # settings renders in tasks/main.yml (same `config` tag) notify restart
+  # anyway. The configtest runs first because "validate apache config" listens
+  # for restart (handlers/main.yml), so a --tags config run can't bounce apache
+  # into a broken config.
   #
   # apache only: celeryd/celerybeat never load prod.wsgi, so notifying them here
   # would restart them for nothing -- not a no-op, just pointless. The host.py
@@ -89,7 +159,6 @@
   # daemon mode mod_wsgi may recycle the daemon on a later request when the
   # script file changes, which can happen before Ansible reaches its handlers.
   notify:
-    - validate apache config
     - restart apache
 
 - name: Remove apache2 logrotate file
@@ -97,25 +166,30 @@
   file:
     path: /etc/logrotate.d/apache2
     state: absent
-  notify: 
-    - restart apache
+  notify:
+    - reload apache
 
 - name: Disable default site
   become: yes
   command: a2dissite 000-default
   notify:
-    - restart apache
+    - reload apache
 
 - name: Enable prod site
   become: yes
   command: a2ensite prod
   notify:
-    - restart apache
+    - reload apache
 
+# logio is not listed: Ubuntu 24.04's apache2 has it compiled in
+# ("logio_module (static)"), there is no mods-available/logio.load, and
+# `a2enmod logio` exits 1 with "Module logio does not exist!".
 - name: Enable SSL rewrite headers
   become: yes
-  command: a2enmod ssl rewrite headers logio
-  notify: 
+  command: a2enmod ssl rewrite headers
+  # Restart, not reload: Debian asks for a restart after a2enmod. On a full run
+  # this command always reports changed, so restart wins over the reloads above.
+  notify:
     - restart apache
 
 - name: Generate static files
@@ -124,8 +198,9 @@
     command: "collectstatic"
     virtualenv: "{{ project_path }}/venv"
     settings: "{{ django_settings_module }}"
+  # Reload is enough: it recycles the mod_wsgi daemons, so the app restarts.
   notify:
-    - restart apache
+    - reload apache
 
 - name: Migrate database
   django_manage:
@@ -134,7 +209,7 @@
     virtualenv: "{{ project_path }}/venv"
     settings: "{{ django_settings_module }}"
   notify:
-    - restart apache
+    - reload apache
 
 - name: Localize Site row to this box's hostname
   # Fixes regluit#1164: snapshot-restored staging boxes inherit prod's Site row

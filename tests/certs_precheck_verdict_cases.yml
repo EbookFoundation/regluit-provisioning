@@ -1,0 +1,214 @@
+---
+# Checks how roles/regluit_prod/tasks/certs_precheck.yml JUDGES the probe's
+# output. What the probe itself reports for a given renewal config is covered
+# separately, and against the real script, by
+# tests/certbot_renewal_probe_test.py.
+#
+# The five expressions in the first play are a DELIBERATE COPY of the ones in
+# certs_precheck.yml: Ansible offers no way to exercise a task file's vars with
+# a stubbed register. Edit them together, or this keeps passing while the role
+# stops working. The copy has already earned itself once -- it is what caught
+# the carriage-return bug, where a CORRECT host would have failed the precheck.
+#
+#   ansible-playbook -i localhost, -c local tests/certs_precheck_verdict_cases.yml
+- hosts: localhost
+  gather_facts: false
+  vars:
+    certbot_webroot: /var/lib/letsencrypt
+    cases:
+      - name: "single name, webroot, ours"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: true
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /var/lib/letsencrypt
+      - name: "single name resolved elsewhere"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /var/www/html
+      - name: "apache authenticator"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=apache
+          webroot=test.unglue.it /var/lib/letsencrypt
+      - name: "empty effective webroot"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it 
+      - name: "prefix lookalike"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /var/lib/letsencrypt-old
+      - name: "path with a comma in it is not ours"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /old,/var/lib/letsencrypt
+      - name: "path with a space in it is not ours"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=test.unglue.it /var/www/old html
+      - name: "both names ours"
+        server_name: unglue.it
+        alt_server_name: www.unglue.it
+        rc: 0
+        expect_ok: true
+        stdout: |
+          authenticator=webroot
+          webroot=unglue.it /var/lib/letsencrypt
+          webroot=www.unglue.it /var/lib/letsencrypt
+      - name: "alt name elsewhere"
+        server_name: unglue.it
+        alt_server_name: www.unglue.it
+        rc: 0
+        expect_ok: false
+        stdout: |
+          authenticator=webroot
+          webroot=unglue.it /var/lib/letsencrypt
+          webroot=www.unglue.it /var/www/html
+      - name: "probe could not read the file (non-zero rc)"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 4
+        expect_ok: false
+        stdout: ""
+      - name: "probe produced nothing at all"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: ""
+      # Ansible's script action runs over a pseudo-terminal, so real output
+      # arrives CRLF-terminated. Before the CR was stripped, a CORRECT config
+      # failed here -- the CR landed inside the captures. (Review round 6.)
+      - name: "CRLF output, correct config, must still pass"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: true
+        stdout: "authenticator=webroot\r\nwebroot=test.unglue.it /var/lib/letsencrypt\r\n"
+      - name: "CRLF output, wrong webroot, must still fail"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: "authenticator=webroot\r\nwebroot=test.unglue.it /var/www/html\r\n"
+      - name: "CRLF output, two names, both correct"
+        server_name: unglue.it
+        alt_server_name: www.unglue.it
+        rc: 0
+        expect_ok: true
+        stdout: "authenticator=webroot\r\nwebroot=unglue.it /var/lib/letsencrypt\r\nwebroot=www.unglue.it /var/lib/letsencrypt\r\n"
+      # Round 6: a trailing space is a different directory to certbot, and an
+      # empty effective webroot is not ours. Neither may be tidied away here.
+      - name: "trailing space in the reported webroot must fail"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: "authenticator=webroot\nwebroot=test.unglue.it /var/lib/letsencrypt \n"
+      - name: "authenticator reported as a list must fail"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: "authenticator=['webroot', 'apache']\nwebroot=test.unglue.it /var/lib/letsencrypt\n"
+
+  tasks:
+    - name: Judge each probe output with the production expressions
+      vars:
+        certbot_renewal_probe: { stdout: "{{ item.stdout }}", rc: "{{ item.rc }}" }
+        server_name: "{{ item.server_name }}"
+        alt_server_name: "{{ item.alt_server_name }}"
+        probe_out: >-
+          {{ certbot_renewal_probe.stdout | default('') | regex_replace('\r', '') }}
+        probe_authenticator: >-
+          {{ probe_out | regex_search('^authenticator=(.*)$', '\1', multiline=True)
+             | default([], true) | first | default('') }}
+        expected_domains: >-
+          {{ [server_name] + ([alt_server_name] if alt_server_name | default('') != '' else []) }}
+        probe_webroots: >-
+          {{ dict(probe_out | regex_findall('^webroot=(\S+) (.*)$', multiline=True)) }}
+        domains_pointing_at_us: >-
+          {{ probe_webroots | dict2items | selectattr('value', 'equalto', certbot_webroot)
+             | map(attribute='key') | list }}
+        wrong_webroots: "{{ expected_domains | reject('in', domains_pointing_at_us) | list }}"
+        verdict: >-
+          {{ (certbot_renewal_probe.rc | default(1) | int == 0)
+             and (probe_authenticator == 'webroot')
+             and (wrong_webroots | length == 0) }}
+      ansible.builtin.assert:
+        that:
+          - (verdict | bool) == (item.expect_ok | bool)
+        fail_msg: >-
+          MISMATCH on "{{ item.name }}": expected ok={{ item.expect_ok }}, got
+          {{ verdict }}. authenticator='{{ probe_authenticator }}'
+          webroots={{ probe_webroots }} wrong={{ wrong_webroots }}
+        success_msg: 'ok={{ verdict }} as expected -- {{ item.name }}'
+      loop: "{{ cases }}"
+      loop_control:
+        label: "{{ item.name }}"
+# Second play: the PRODUCTION shape. certbot_manage is unset there, so the
+# stat task is skipped and its registered variable has no .stat at all. If
+# `certbot_precheck_cert.stat.exists | default(false)` errored instead of
+# defaulting to false, every production run would break on a file that is
+# supposed to be inert for production. This play asserts it stays inert.
+- hosts: localhost
+  gather_facts: false
+  vars:
+    certbot_manage: false        # production: unset -> role default false
+    manage_certs: false          # production
+  tasks:
+    - name: Check whether this host already has a certificate
+      stat:
+        path: /nonexistent/does-not-matter
+      register: certbot_precheck_cert
+      check_mode: false
+      when: certbot_manage | default(false) | bool
+
+    - name: Show what the skipped register looks like
+      debug:
+        msg: "registered = {{ certbot_precheck_cert }}"
+
+    - name: The guard must evaluate to false without erroring
+      debug:
+        msg: "guard = {{ certbot_manage | default(false) | bool and (certbot_precheck_cert.stat.exists | default(false)) }}"
+
+    - name: Downstream task must be skipped, not error
+      ansible.builtin.assert:
+        that:
+          - false
+        fail_msg: "THIS MUST NOT RUN on production"
+      when:
+        - certbot_manage | default(false) | bool
+        - certbot_precheck_cert.stat.exists | default(false)
+
+    - name: The mutual-exclusion assert still runs on production
+      ansible.builtin.assert:
+        that:
+          - not (manage_certs | default(true) | bool and certbot_manage | default(false) | bool)
+        success_msg: "production passes the mutual-exclusion check"

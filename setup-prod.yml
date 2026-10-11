@@ -1,15 +1,33 @@
 - hosts: regluit-prod
   gather_facts: false
   tasks:
-    # Need to install python3.8 and pip first so Ansible will function
-  - name: Install python3.8 and pip for dev
+  # Ansible needs two things on the target before its modules work: a python3
+  # interpreter, and the python3-apt bindings the apt module imports. Each is
+  # checked on its own and installed only if missing, so these tasks report
+  # "changed" only when they installed something.
+  # No Python version is pinned here on purpose: Ansible runs on Ubuntu's own
+  # python3. The version the *app* runs on is the python_version variable
+  # (group_vars), enforced by the venv assertion in roles/regluit_prod.
+  # (Was: apt install python3.8, which Ubuntu 24.04 does not offer - #74.)
+  - name: Bootstrap - ensure python3 exists so Ansible modules can run
     become: true
-    raw: bash -c "apt -qqy update && apt install -y python3.8  python3-pip python3-apt"
-    register: output
-    changed_when: output.stdout != ""
+    raw: test -x /usr/bin/python3 || (apt-get -qqy update && apt-get install -qqy python3 && echo BOOTSTRAP_INSTALLED)
+    register: bootstrap_python
+    changed_when: "'BOOTSTRAP_INSTALLED' in bootstrap_python.stdout"
+    tags: [bootstrap]
 
+  - name: Bootstrap - ensure python3-apt exists so the apt module can run
+    become: true
+    raw: /usr/bin/python3 -c "import apt" 2>/dev/null || (apt-get -qqy update && apt-get install -qqy python3-apt && echo BOOTSTRAP_INSTALLED)
+    register: bootstrap_apt
+    changed_when: "'BOOTSTRAP_INSTALLED' in bootstrap_apt.stdout"
+    tags: [bootstrap]
+
+  # Tagged "always" so narrow tagged runs (--tags config, --tags python, ...)
+  # also have facts available. This task only reads.
   - name: Gathering Facts
     setup:
+    tags: [always]
 
   - import_role:
       name: regluit_prod

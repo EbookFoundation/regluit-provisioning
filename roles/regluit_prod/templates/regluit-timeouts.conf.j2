@@ -1,0 +1,10 @@
+# Managed by Ansible (roles/regluit_prod/tasks/apache.yml) — do not edit by
+# hand. Installed to conf-available and enabled with a2enconf. apache2.conf
+# reads conf-enabled/ after mods-enabled/, so these lines override the stock
+# Timeout and the stock RequestReadTimeout in mods-enabled/reqtimeout.conf.
+# Each RequestReadTimeout line changes only the stages it names.
+# Values: defaults/main.yml (issue #81).
+
+Timeout {{ apache_timeout }}
+
+RequestReadTimeout {{ apache_request_read_timeout }}
