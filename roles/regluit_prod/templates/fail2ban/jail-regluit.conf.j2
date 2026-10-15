@@ -109,5 +109,6 @@ bantime  = 1h
 # entirely (GPTBot, CCBot, Bytespider, Amazonbot, meta-externalagent, Diffbot)
 # after 20 requests in 10 minutes. Removed 2026-10-14: it would ban GPTBot,
 # which Eric chose in July to leave alone at the server. robots.txt still asks
-# those crawlers to stay away; nothing here enforces it. Only the two rate
-# rules above turn anyone away. The test asserts GPTBot is not banned.
+# those crawlers to stay away; nothing here enforces it. No rule here names any
+# crawler: the two rate rules above apply to every address alike, GPTBot's
+# included, so a crawler that floods /feedback/ is still banned for the rate.

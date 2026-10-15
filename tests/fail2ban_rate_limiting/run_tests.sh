@@ -133,9 +133,9 @@ assert "120 /socialauth/ hits in a minute IS banned" "fail2ban-client status reg
 assert "and the flood jail did NOT also fire on those 120" \
                                                "! fail2ban-client status regluit-flood | grep -q 10.0.0.4"
 
-echo "--- GPTBot, which Eric chose in July to leave alone, far below every rate threshold"
+echo "--- GPTBot is not banned for being GPTBot (Eric, July). Like any address, it is still banned if it crosses a rate rule."
 burst 25 10.0.0.5 /work/ "$UA_GPTBOT"; sleep 6
-assert "GPTBot at 25 requests is NOT banned"   "! fail2ban-client banned | grep -q 10.0.0.5"
+assert "GPTBot below the rate thresholds is NOT banned (no rule matches it by name)" "! fail2ban-client banned | grep -q 10.0.0.5"
 burst 25 10.0.0.6 /work/ "$UA_GOOGLE"; sleep 6
 assert "Googlebot at the same volume is NOT banned" "! fail2ban-client banned | grep -q 10.0.0.6"
 
