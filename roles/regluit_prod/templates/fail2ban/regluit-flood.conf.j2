@@ -1,0 +1,17 @@
+# Any request at all, from any address. The jail's maxretry is what makes this
+# a rate limit; this filter only has to identify the client and be cheap.
+#
+# Reads the narrow rate-limiting log apache.conf.j2 writes at a fixed path:
+#   %h %t "%r" "%{User-Agent}i"
+#   1.2.3.4 [17/Sep/2026:06:05:03 +0000] "GET / HTTP/1.1" "Mozilla/5.0 ..."
+#
+# NOTE ON THE LINE SHAPE fail2ban ACTUALLY SEES: it removes the matched date
+# TEXT before applying failregex, leaving the surrounding brackets, so the line
+# above is matched as
+#   1.2.3.4 [] "GET / HTTP/1.1" "Mozilla/5.0 ..."
+# which is why nothing here tries to match inside the brackets.
+#
+# Managed by Ansible (regluit_prod). EbookFoundation/security-private#32.
+[Definition]
+failregex = ^<HOST> \[
+ignoreregex =
