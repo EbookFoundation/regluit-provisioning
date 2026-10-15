@@ -98,5 +98,4 @@
   changed_when: false
   failed_when: >
     'regluit-flood' not in f2b_status.stdout or
-    'regluit-expensive' not in f2b_status.stdout or
-    'regluit-badbot' not in f2b_status.stdout
+    'regluit-expensive' not in f2b_status.stdout

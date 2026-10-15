@@ -104,16 +104,10 @@ maxretry = 100
 findtime = 60
 bantime  = 1h
 
-# --- Crawlers robots.txt already forbids --------------------------------------
-# Rate limiting cannot catch these and it is worth being exact about why: on
-# 2026-09-11 GPTBot made 167,001 requests from one address while never exceeding
-# 140 in any 60-second window. It is low and slow by design. On 2026-09-17 it
-# made 128,382 requests, 43,910 of them to /feedback/ and 46,947 to /accounts/,
-# paths its own robots.txt group forbids, and it fetched robots.txt zero times.
-# 20 requests in 10 minutes from a crawler that is supposed to fetch none.
-[regluit-badbot]
-enabled  = true
-filter   = regluit-badbot
-maxretry = 20
-findtime = 600
-bantime  = 24h
+# --- No jail for crawlers that ignore robots.txt -----------------------------
+# An earlier version of this file banned the six crawlers robots.txt sends away
+# entirely (GPTBot, CCBot, Bytespider, Amazonbot, meta-externalagent, Diffbot)
+# after 20 requests in 10 minutes. Removed 2026-10-14: it would ban GPTBot,
+# which Eric chose in July to leave alone at the server. robots.txt still asks
+# those crawlers to stay away; nothing here enforces it. Only the two rate
+# rules above turn anyone away. The test asserts GPTBot is not banned.

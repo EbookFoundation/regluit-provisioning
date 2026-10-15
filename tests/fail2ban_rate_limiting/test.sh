@@ -14,7 +14,7 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
 mkdir -p "$WORK/filter.d" "$WORK/jail.d"
-for f in regluit-flood regluit-expensive regluit-badbot; do
+for f in regluit-flood regluit-expensive; do
     cp "$TPL/$f.conf.j2" "$WORK/filter.d/$f.conf"      # no Jinja in the filters
 done
 

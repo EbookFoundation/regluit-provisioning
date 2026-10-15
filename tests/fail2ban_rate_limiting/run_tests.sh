@@ -38,16 +38,6 @@ burst() { # $1=count $2=ip $3=path-prefix $4=user-agent — one date() for the l
 UA_SCRAPER='CrawlerPlatform-scrapy-crawl/http-evaluation'
 UA_GPTBOT='Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.4; +https://openai.com/gptbot)'
 UA_GOOGLE='Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'
-UA_CHATGPT_USER='Mozilla/5.0 (compatible; ChatGPT-User/1.0; +https://openai.com/bot)'
-UA_OAI_SEARCH='Mozilla/5.0 (compatible; OAI-SearchBot/1.0; +https://openai.com/searchbot)'
-UA_CLAUDE_SEARCH='Mozilla/5.0 (compatible; Claude-SearchBot/1.0; +searchbot@anthropic.com)'
-UA_CLAUDEBOT='Mozilla/5.0 (compatible; ClaudeBot/1.0; +claudebot@anthropic.com)'
-UA_AMZN_SEARCH='Mozilla/5.0 (compatible; Amzn-SearchBot/1.0)'
-UA_META_WEB='meta-webindexer/1.0'
-UA_PERPLEXITY='Mozilla/5.0 (compatible; PerplexityBot/1.0; +https://perplexity.ai/perplexitybot)'
-UA_PERPLEXITY_USER='Mozilla/5.0 (compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user)'
-UA_CLAUDE_USER='Mozilla/5.0 (compatible; Claude-User/1.0; +Claude-User@anthropic.com)'
-UA_AMZN_USER='Mozilla/5.0 (compatible; Amzn-User/1.0)'
 UA_HUMAN='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/145.0.0.0 Safari/537.36'
 
 fbr() { fail2ban-regex "$1" "/etc/fail2ban/filter.d/$2.conf" 2>&1; }
@@ -83,45 +73,13 @@ assert "expensive still matches a doubled slash, //socialauth/" \
                                                "[ \"\$(hits /tmp/h.log regluit-expensive)\" = 1 ]"
 
 # =====================================================================
-echo "=== B. bad-bot filter: the robots.txt Disallow:/ list, and ONLY it ==="
-: > /tmp/b.log
-# These are the strings production actually logged on 2026-09-17, not invented
-# ones. Bytespider is the reason: it carries NO version, and a filter that
-# required a "/" after the name matched none of its traffic.
-line 5.5.5.1 "GET / HTTP/1.1" "$UA_GPTBOT" >> /tmp/b.log
-line 5.5.5.2 "GET / HTTP/1.1" "CCBot/2.0 (https://commoncrawl.org/faq/)" >> /tmp/b.log
-line 5.5.5.3 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; Bytespider; spider-feedback@bytedance.com)" >> /tmp/b.log
-line 5.5.5.4 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; Amazonbot/0.1; +https://developer.amazon.com/support/amazonbot)" >> /tmp/b.log
-line 5.5.5.5 "GET / HTTP/1.1" "meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)" >> /tmp/b.log
-line 5.5.5.6 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; Diffbot/0.1; +http://www.diffbot.com)" >> /tmp/b.log
-line 5.5.5.7 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; Diffbot)" >> /tmp/b.log
-assert "badbot matches all six forbidden agents, versioned or not" "[ \"\$(hits /tmp/b.log regluit-badbot)\" = 7 ]"
-
-: > /tmp/ok.log
-for ua in "$UA_GOOGLE" "$UA_CHATGPT_USER" "$UA_OAI_SEARCH" "$UA_CLAUDE_SEARCH" "$UA_CLAUDEBOT" \
-          "$UA_AMZN_SEARCH" "$UA_META_WEB" "$UA_PERPLEXITY" "$UA_PERPLEXITY_USER" \
-          "$UA_CLAUDE_USER" "$UA_AMZN_USER" "$UA_HUMAN"; do
-  line 6.6.6.6 "GET / HTTP/1.1" "$ua" >> /tmp/ok.log
-done
-assert "badbot spares all eleven crawlers robots.txt allows, and a reader" \
-                                               "[ \"\$(hits /tmp/ok.log regluit-badbot)\" = 0 ]"
-
-# A bot name inside the requested URL must not ban the person who asked for it,
-# and a name embedded in a longer token is not that bot.
-: > /tmp/r.log
-line 7.7.7.7 "GET /work/about/GPTBot/1.4 HTTP/1.1" "$UA_HUMAN"        >> /tmp/r.log
-line 7.7.7.8 "GET / HTTP/1.1" "Mozilla/5.0 (compatible; XDiffbotted)" >> /tmp/r.log
-assert "badbot ignores a bot name in the URL and inside a longer word" \
-                                               "[ \"\$(hits /tmp/r.log regluit-badbot)\" = 0 ]"
-
-# =====================================================================
 echo "=== C. live: real bans, real firewall rules, real mail ==="
 fail2ban-server -xf >/var/log/f2b.out 2>&1 &
 sleep 8
 assert "fail2ban is up"                        "fail2ban-client ping | grep -q pong"
 assert "regluit-flood jail started"            "fail2ban-client status | grep -q regluit-flood"
 assert "regluit-expensive jail started"        "fail2ban-client status | grep -q regluit-expensive"
-assert "regluit-badbot jail started"           "fail2ban-client status | grep -q regluit-badbot"
+assert "and no bad-bot jail (removed 2026-10-14)" "! fail2ban-client status | grep -q regluit-badbot"
 assert "Debian's default sshd jail is OFF"     "! fail2ban-client status | grep -q sshd"
 assert "the jails read the fixed-path log"     "fail2ban-client get regluit-flood logpath | grep -q '$LOG'"
 
@@ -175,9 +133,9 @@ assert "120 /socialauth/ hits in a minute IS banned" "fail2ban-client status reg
 assert "and the flood jail did NOT also fire on those 120" \
                                                "! fail2ban-client status regluit-flood | grep -q 10.0.0.4"
 
-echo "--- a declared bad bot, far below every rate threshold"
+echo "--- GPTBot, which Eric chose in July to leave alone, far below every rate threshold"
 burst 25 10.0.0.5 /work/ "$UA_GPTBOT"; sleep 6
-assert "GPTBot banned at 25 requests"          "fail2ban-client status regluit-badbot | grep -q 10.0.0.5"
+assert "GPTBot at 25 requests is NOT banned"   "! fail2ban-client banned | grep -q 10.0.0.5"
 burst 25 10.0.0.6 /work/ "$UA_GOOGLE"; sleep 6
 assert "Googlebot at the same volume is NOT banned" "! fail2ban-client banned | grep -q 10.0.0.6"
 
@@ -245,8 +203,8 @@ fail2ban-server -xf >/var/log/f2b-relog.out 2>&1 &
 sleep 8
 assert "touching the file first is enough to bring the whole server back" \
        "fail2ban-client ping 2>/dev/null | grep -q pong"
-assert "and all three jails start from an empty log" \
-       "fail2ban-client status | grep -q regluit-flood && fail2ban-client status | grep -q regluit-badbot"
+assert "and both jails start from an empty log" \
+       "fail2ban-client status | grep -q regluit-flood && fail2ban-client status | grep -q regluit-expensive"
 
 echo; echo "RESULTS: $pass passed, $fail failed"
 [ $fail -eq 0 ]
