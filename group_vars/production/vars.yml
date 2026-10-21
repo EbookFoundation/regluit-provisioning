@@ -49,6 +49,11 @@ mysql_db_port: ""
 email_host: "{{ vault_email_host }}"
 email_port: 587
 default_from_email: "unglueit@ebookfoundation.org"
+# Where the server watchdogs (apache_liveness_watch, wsgi_wedge_watch,
+# mem_alert) send alerts. Unset, they fell back to notices@gluejar.com, which
+# only sends mail and is read by no one: on 2026-10-20 the liveness alert for a
+# 50-minute outage was delivered there and never seen.
+mem_alert_email: "raymond.yee+ungluebugs@gmail.com"
 
 ### Variables in common.py ###
 common_keys:
