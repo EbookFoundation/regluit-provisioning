@@ -54,6 +54,12 @@ default_from_email: "unglueit@ebookfoundation.org"
 # only sends mail and is read by no one: on 2026-10-20 the liveness alert for a
 # 50-minute outage was delivered there and never seen.
 mem_alert_email: "raymond.yee+ungluebugs@gmail.com"
+# Ebook downloads go through the CloudFront distribution at files.unglue.it
+# (origin: the tieulgnu bucket, flat-rate plan) instead of straight from S3,
+# which bills ~$0.09/GB out. Set to "" and re-render to send them back to S3.
+# Needs the app's EBOOK_CDN_BASE support (Gluejar/regluit, ebook-cdn PR) and the
+# distribution to exist first.
+ebook_cdn_base: "https://files.unglue.it/"
 
 ### Variables in common.py ###
 common_keys:

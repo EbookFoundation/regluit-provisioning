@@ -87,6 +87,10 @@ CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 #BASE_URL = 'http://{{ server_name }}'
 BASE_URL_SECURE = 'https://{{ server_name }}'
 
+# Ebook downloads through CloudFront (regluit settings/common.py, EBOOK_CDN_BASE).
+# Set only for production; empty elsewhere, which keeps downloads going straight to S3.
+EBOOK_CDN_BASE = '{{ ebook_cdn_base | default('') }}'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': True,
