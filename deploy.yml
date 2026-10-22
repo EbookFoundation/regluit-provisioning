@@ -54,6 +54,24 @@
     run_collectstatic: false
 
   tasks:
+    # test.unglue.it runs on demand (scripts/test_env.sh) and is stopped every
+    # night, so check it is reachable before anything else; otherwise the first
+    # SSH task just hangs and then fails with an unhelpful timeout.
+    - name: Check test is running (on demand; scripts/test_env.sh up)
+      when: inventory_hostname == 'regluit-test'
+      delegate_to: localhost
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        timeout: 15
+      register: test_ssh
+      ignore_errors: true
+
+    - name: Stop if test is stopped
+      when: inventory_hostname == 'regluit-test' and test_ssh is failed
+      fail:
+        msg: "test.unglue.it is not answering on SSH; it is probably stopped. Run scripts/test_env.sh up (5-10 minutes), then deploy again."
+
     - name: Show what is about to deploy
       debug:
         msg: >-
