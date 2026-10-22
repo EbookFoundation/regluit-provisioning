@@ -61,6 +61,22 @@ Stdlib-only Python 3 that read the Apache access logs (`/var/log/apache2/YYYYMMD
 - `scripts/page_depth.py`: how deep `/free/` requests page (`?work_list=N`), split into likely-human, browser-only and other traffic.
 - `scripts/cache_hit_estimate.py`: replays a log through a simulated shared cache and estimates hits and server seconds saved per URL family.
 
+### Test on demand
+
+test.unglue.it is off unless someone turns it on, and AWS stops it every night at 02:00 Pacific. That saves about $100 a month: roughly $35 while stopped, against $135 running. `scripts/test_env.sh` runs from the control machine with the `gluejar_member` AWS profile:
+
+- `scripts/test_env.sh status`: is the server running, is the database available, is the nightly stop installed.
+- `scripts/test_env.sh up`: start both and wait until `https://test.unglue.it/` answers. This takes 5–10 minutes, mostly the database. Do it before `deploy.yml -e deploy_target=regluit-test`, which otherwise stops early with a reminder.
+- `scripts/test_env.sh down`: stop both when you are done. It is safe to run twice, and the nightly stop catches anything left running.
+- `scripts/test_env.sh install-schedule`: one-time setup of the nightly stop (two EventBridge Scheduler schedules and a small IAM role, `unglueit-test-nightly-stop`). Re-run it after test is rebuilt, since it targets the current instance and database. `remove-schedule` undoes it.
+
+Notes:
+
+- AWS restarts a stopped RDS database on its own after 7 days. The nightly stop is what keeps it off.
+- The Elastic IP stays attached, so `test.unglue.it` keeps its address while stopped.
+- Certbot's renewal timer catches up at boot if it missed runs.
+- Test has no Celery beat jobs and no SolarWinds check, so stopping it alarms nothing.
+
 ## Notes
 
 `sudo apt-get install mysql-client-8.0=8.0.19-0ubuntu5`
