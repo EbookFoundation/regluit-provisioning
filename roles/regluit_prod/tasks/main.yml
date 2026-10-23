@@ -59,7 +59,34 @@
     repo: "{{ git_repo }}"
     dest: "{{ project_path }}"
     version: "{{ git_branch }}"
-   
+
+# pip itself first, so the requirements install below already runs with it:
+# pip trusts its own vendored CA bundle, and pip < 26.2.2 still trusts the
+# compromised emSign intermediates (security-private#39). The old pip can't be
+# trusted to fetch its replacement over TLS, so install the exact wheel by URL
+# with its sha256: pip rejects any other bytes.
+# Order on a from-scratch build: create the venv (same mechanism as before,
+# nothing fetched), upgrade pip, then install requirements with the new pip.
+- name: Create the virtualenv if missing (installs nothing new)
+  pip:
+    name: pip
+    state: present
+    virtualenv: "{{ project_path }}/venv"
+
+- name: Read the virtualenv's pip version
+  command:
+    argv: ["{{ project_path }}/venv/bin/python", "-c", "import pip; print(pip.__version__)"]
+  register: venv_pip
+  changed_when: false
+  check_mode: false     # read-only, so let it run under --check too
+
+- name: Upgrade pip from its hash-pinned wheel
+  command:
+    argv: ["{{ project_path }}/venv/bin/python", "-m", "pip", "install", "pip @ {{ pip_wheel }}"]
+  vars:
+    pip_wheel: "https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+  when: venv_pip.stdout is version('26.2.2', '<')
+
 - name: Install python packages to virtualenv
   pip:
     requirements: "{{ project_path }}/requirements.txt"

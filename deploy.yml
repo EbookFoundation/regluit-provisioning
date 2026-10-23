@@ -71,10 +71,34 @@
       register: checkout
 
     # OPTIONAL — only when a dependency changed (not strictly "code-only")
+    # pip itself first: pip trusts its own vendored CA bundle, and pip < 26.2.2
+    # still trusts the compromised emSign intermediates (security-private#39).
+    # The old pip can't be trusted to fetch its own replacement over TLS, so
+    # install the exact wheel by URL with its sha256: pip rejects any other bytes.
+    # deploy.yml expects an existing venv (setup-prod.yml builds it); if it is
+    # missing, the next task fails rather than creating one here.
+    - name: Read the virtualenv's pip version
+      command:
+        argv: ["{{ project_path }}/venv/bin/python", "-c", "import pip; print(pip.__version__)"]
+      register: venv_pip
+      changed_when: false
+      check_mode: false     # read-only, so let it run under --check too
+      when: run_pip | bool
+
+    - name: Upgrade pip from its hash-pinned wheel
+      command:
+        argv: ["{{ project_path }}/venv/bin/python", "-m", "pip", "install", "pip @ {{ pip_wheel }}"]
+      vars:
+        pip_wheel: "https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+      when: (run_pip | bool) and (venv_pip.stdout is version('26.2.2', '<'))
+
     - name: Install python packages to virtualenv
       pip:
         requirements: "{{ project_path }}/requirements.txt"
-        state: latest
+        # present, not latest (as in roles/regluit_prod): latest would upgrade
+        # every package requirements.txt doesn't pin exactly. Exact pins still
+        # move.
+        state: present
         virtualenv: "{{ project_path }}/venv"
       when: run_pip | bool
 
