@@ -61,6 +61,18 @@ Stdlib-only Python 3 that read the Apache access logs (`/var/log/apache2/YYYYMMD
 - `scripts/page_depth.py`: how deep `/free/` requests page (`?work_list=N`), split into likely-human, browser-only and other traffic.
 - `scripts/cache_hit_estimate.py`: replays a log through a simulated shared cache and estimates hits and server seconds saved per URL family.
 
+## Pre-commit hooks
+
+`.pre-commit-config.yaml` rejects commits that add an unencrypted private key or other secrets (see security-private#10). Install it once per clone.
+pre-commit needs Python 3.9 or newer, and this repo's venv is Python 3.7, so install it outside the venv, e.g. with [pipx](https://pipx.pypa.io/):
+
+```
+$ pipx install pre-commit
+$ pre-commit install
+```
+
+CI runs gitleaks on every PR as a backstop (`.github/workflows/gitleaks.yml`).
+
 ## Notes
 
 `sudo apt-get install mysql-client-8.0=8.0.19-0ubuntu5`
