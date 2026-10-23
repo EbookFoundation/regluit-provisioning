@@ -32,3 +32,34 @@ email_safe_mode_redirect_to: ""
 certbot_manage: false
 certbot_webroot: /var/lib/letsencrypt
 certbot_email: support@ebookfoundation.org
+
+# Apache timeouts (templates/regluit-timeouts.conf.j2, issue #81). Before this,
+# the box ran Ubuntu's stock values, which no playbook set.
+#
+# Timeout: how long Apache waits on a single read or write before giving up.
+# It is an idle limit per I/O, not a cap on the whole response, so a slow
+# download that keeps moving is not cut off. 300 is Ubuntu's stock value; this
+# makes it managed without changing it. Lowering it has a cost: mod_wsgi's
+# socket-timeout defaults to it, so a Django page slower than this becomes a
+# 504 while its thread keeps running. Prod, 2026-09-24..30: 477 successful
+# responses took over 60 s (mostly OPDS feeds while the box was saturated).
+apache_timeout: 300
+
+# mod_reqtimeout limits for the stages before Django sees a request. Stock
+# Ubuntu sets header and body only; the handshake stage (TLS setup) is off, so
+# a client that connects and stalls mid-handshake holds a worker for the full
+# Timeout. Seen on prod 2026-09-30: ~100 of 150 workers stuck in "reading
+# request" with the database idle (security-private#33).
+# Format: stage=seconds[-max_seconds][,MinRate=bytes_per_second], per stage.
+apache_request_read_timeout: "handshake=10-20,MinRate=500 header=20-40,MinRate=500 body=10,MinRate=500"
+
+# Sources to drop at the firewall (tasks/main.yml, ufw). Empty = no change.
+# Each entry is a source (address or CIDR) and an optional comment, which ufw
+# stores with the rule and shows in `ufw status`. Set per host group in
+# group_vars/<env>/vars.yml, with a note there saying why and when to revisit.
+# Needs ufw to be active on the host; the play stops with a message if it is
+# not, rather than adding rules that do nothing. Removing an entry here does
+# NOT remove its rule; delete it by hand (`ufw delete deny from <cidr>`).
+firewall_blocked_sources: []
+# - source: 203.0.113.7/32
+#   comment: "regluit: why, date, issue link"

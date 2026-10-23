@@ -145,6 +145,14 @@ RewriteRule ^ - [F]
 # /password/reset/?next= chains that the recursion rules deliberately allow.
 RewriteCond %{HTTP_USER_AGENT} "OAPEN-DOAB-TXT-Downloader" [NC]
 RewriteRule ^ - [F]
+# Undeclared scraper "research-client/1.0" (2026-10-10): one address, 28k
+# /work/ pages at ~11/s, all 4 cores pegged for ~75 minutes; no robots.txt
+# fetch seen that day. Blocked by name, not address: it was back the next
+# day from a different one. A stopgap until per-address rate limiting (#82).
+# Full agent string as logged: "Mozilla/5.0 (X11; Linux x86_64)
+# research-client/1.0" — so the match is on the versioned token, unanchored.
+RewriteCond %{HTTP_USER_AGENT} "research-client/[0-9]" [NC]
+RewriteRule ^ - [F]
 # NOT blocked (self-identified, robots.txt-honoring, modest rate — Eric's
 # call, since AI/SEO discoverability may serve the mission): GPTBot,
 # ClaudeBot, DotBot, meta-webindexer.
