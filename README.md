@@ -61,6 +61,21 @@ Stdlib-only Python 3 that read the Apache access logs (`/var/log/apache2/YYYYMMD
 - `scripts/page_depth.py`: how deep `/free/` requests page (`?work_list=N`), split into likely-human, browser-only and other traffic.
 - `scripts/cache_hit_estimate.py`: replays a log through a simulated shared cache and estimates hits and server seconds saved per URL family.
 
+## Python and security updates
+
+The servers use Ubuntu 24.04's own Python (`python3.12`); we don't build or install upstream Python. Decided 2026-10-26 (#102).
+
+Ubuntu backports security fixes into its own builds and keeps the version number, so the servers report 3.12.3 even when they carry the fix an advisory attributes to a later 3.12.x. When an advisory says to upgrade Python, don't compare version numbers: look up the advisory's CVE in Ubuntu's CVE tracker (<https://ubuntu.com/security/cves>) and read its status for `python3.12` on 24.04 (noble). It may be fixed, pending, or not applicable to Ubuntu's build.
+
+What happens without anyone acting:
+
+- `unattended-upgrades` installs Ubuntu security updates every day (early morning UTC).
+- `needrestart` then restarts the services that use a changed library, including `apache2`, `celeryd` and `celerybeat`. Seen on prod 2026-10-23: a zlib update at 06:23:01 UTC, all three restarted at 06:23:03.
+
+What does not: anything inside the app's virtualenv, including pip and certifi. Ubuntu's updates don't touch those. Our way to update them is the app's `requirements.txt` plus a deploy with `-e run_pip=true`, which first upgrades the venv's pip from a hash-pinned wheel (see `deploy.yml`). The emSign certificate incident in October 2026 was fixed this way (#101).
+
+Next decision point: upstream Python 3.12 security support ends October 2028; Ubuntu 24.04 standard support runs to 2029.
+
 ## Notes
 
 `sudo apt-get install mysql-client-8.0=8.0.19-0ubuntu5`
