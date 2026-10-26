@@ -72,6 +72,23 @@ WSGIProcessGroup regluit
 # long-standing mod_wsgi best practice for C-extension/threading correctness.
 WSGIApplicationGroup %{GLOBAL}
 
+{% if login_gate_on | default(false) | bool %}
+# --- Login gate (test only: needs test_gate AND deploy_type 'test') ---------
+# Every HTTPS request needs a login before it reaches Django. Unwanted traffic
+# gets a cheap 401 from Apache, with no WSGI or database work. Certificate
+# renewal is unaffected: it uses the port-80 vhost above, which isn't gated.
+# Turn off/on: ansible-playbook -i hosts setup-test.yml --tags apache-config -e test_gate=false (or true)
+# AuthMerging And keeps the <Directory>/<Files> rules below in force as well.
+<Location />
+  AuthType Basic
+  AuthName "{{ server_name }}"
+  AuthUserFile /etc/apache2/regluit-gate.htpasswd
+  AuthMerging And
+  Require valid-user
+</Location>
+# ---------------------------------------------------------------------------
+{% endif %}
+
 # --- Maintenance mode (flag-file toggle; no apache reload needed) ----------
 # ON:   sudo touch /var/www/maintenance/MAINTENANCE_ON
 # OFF:  sudo rm /var/www/maintenance/MAINTENANCE_ON

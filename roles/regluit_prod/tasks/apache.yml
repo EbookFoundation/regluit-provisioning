@@ -23,6 +23,23 @@
   # as well, before certs_certbot.yml touches the certificate.
   tags: [apache-config, oom-hardening, certs]
 
+# Login gate (test only). The user file must exist before a config that names
+# it is loaded, so it is written before the render; when the gate is off, it is
+# removed after the render (below). The vault holds the finished line
+# ("user:bcrypt-hash"), so nothing needs installing on the server.
+- name: Install login-gate user file
+  become: yes
+  # Same tags as the render, so no tagged run can render the gate without it.
+  tags: [apache-config, oom-hardening]
+  when: login_gate_on | bool
+  copy:
+    content: "{{ test_gate_userline }}\n"
+    dest: /etc/apache2/regluit-gate.htpasswd
+    owner: root
+    group: www-data
+    mode: 0640
+  no_log: true
+
 - name: Create apache config
   become: yes
   tags: [apache-config, oom-hardening]
@@ -37,6 +54,33 @@
   # WSGIDaemonProcess line, without refusing connections.
   notify:
     - reload apache
+
+# Turning the gate off: Apache must load the ungated config (rendered above)
+# before the user file goes, or requests 500 in between. So reload now, then
+# remove. Only when the file is still there, so ordinary runs don't reload.
+- name: Check for a login-gate user file
+  become: yes
+  tags: [apache-config, oom-hardening]
+  when: not (login_gate_on | bool)
+  stat:
+    path: /etc/apache2/regluit-gate.htpasswd
+  register: login_gate_file
+
+- name: Reload apache with the ungated config before removing the user file
+  become: yes
+  tags: [apache-config, oom-hardening]
+  when: not (login_gate_on | bool) and login_gate_file.stat.exists
+  service:
+    name: apache2
+    state: reloaded
+
+- name: Remove login-gate user file when the gate is off
+  become: yes
+  tags: [apache-config, oom-hardening]
+  when: not (login_gate_on | bool) and login_gate_file.stat.exists
+  file:
+    path: /etc/apache2/regluit-gate.htpasswd
+    state: absent
 
 # Timeout and RequestReadTimeout (#81): regluit-timeouts.conf.j2 and
 # defaults/main.yml say why. mod_reqtimeout is on in stock Ubuntu; enabling

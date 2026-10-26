@@ -63,3 +63,9 @@ apache_request_read_timeout: "handshake=10-20,MinRate=500 header=20-40,MinRate=5
 firewall_blocked_sources: []
 # - source: 203.0.113.7/32
 #   comment: "regluit: why, date, issue link"
+
+# Login gate (apache.conf.j2, tasks/apache.yml). On only when the host's
+# group_vars set test_gate: true AND the host is test, so even
+# `setup-prod.yml -e test_gate=true` can't gate production.
+test_gate: false
+login_gate_on: "{{ (test_gate | bool) and (deploy_type | default('') == 'test') }}"
