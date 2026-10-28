@@ -21,6 +21,14 @@ git_branch: "master"
 # using the webroot + deploy-hook arrangement test has run since 2026-08-18.
 manage_certs: false
 certbot_manage: true
+# Login gate in front of the whole HTTPS site (apache.conf.j2), so crawlers get
+# a cheap 401 instead of Django pages. Added 2026-10-26 after a distributed
+# scraper pinned test's CPU. To let real traffic in for a while:
+#   ansible-playbook -i hosts setup-test.yml --tags apache-config -e test_gate=false
+test_gate: true
+# "user:bcrypt-hash", one line, as in an Apache user file. The login itself is
+# in 1Password (EbookFoundation vault, "test.unglue.it gate").
+test_gate_userline: "{{ vault_test_gate_userline }}"
 # Anything but 'prod': keeps the "no production database" guard on and the
 # Beat schedule empty (see prod.py.j2).
 deploy_type: 'test'

@@ -61,6 +61,17 @@ Stdlib-only Python 3 that read the Apache access logs (`/var/log/apache2/YYYYMMD
 - `scripts/page_depth.py`: how deep `/free/` requests page (`?work_list=N`), split into likely-human, browser-only and other traffic.
 - `scripts/cache_hit_estimate.py`: replays a log through a simulated shared cache and estimates hits and server seconds saved per URL family.
 
+## Login gate on test.unglue.it
+
+test.unglue.it asks for a login (HTTP Basic auth, at the Apache level) before anything reaches the app, so crawlers get a cheap 401 instead of Django pages. Production has no gate: it needs both `test_gate: true` and `deploy_type: 'test'` (`login_gate_on` in `roles/regluit_prod/defaults/main.yml`), so even `-e test_gate=true` on a prod run does nothing. The login is in 1Password (EbookFoundation vault, "test.unglue.it gate"); the vault holds only its bcrypt line (`vault_test_gate_userline`).
+
+To let real traffic in for a while, then lock it again:
+
+```
+ansible-playbook -i hosts setup-test.yml --tags apache-config -e test_gate=false
+ansible-playbook -i hosts setup-test.yml --tags apache-config -e test_gate=true
+```
+
 ## Python and security updates
 
 The servers use Ubuntu 24.04's own Python (`python3.12`); we don't build or install upstream Python. Decided 2026-10-26 (#102).
