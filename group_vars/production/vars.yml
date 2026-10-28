@@ -61,6 +61,11 @@ mem_alert_email: "raymond.yee+ungluebugs@gmail.com"
 # distribution to exist first.
 ebook_cdn_base: "https://files.unglue.it/"
 
+# Cover thumbnails and other stored-file URLs through the same CloudFront
+# distribution (whole bucket as origin, no origin path). Host only: no scheme, no
+# trailing slash. Set to "" and re-render to send them back to S3 (provisioning #105).
+s3_custom_domain: "files.unglue.it"
+
 ### Variables in common.py ###
 common_keys:
   booxtream_api_key: "{{ vault_booxtream_api_key }}"
