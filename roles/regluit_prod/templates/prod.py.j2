@@ -91,6 +91,13 @@ BASE_URL_SECURE = 'https://{{ server_name }}'
 # Set only for production; empty elsewhere, which keeps downloads going straight to S3.
 EBOOK_CDN_BASE = '{{ ebook_cdn_base | default('') }}'
 
+# Stored-file URLs (cover thumbnails, uploads) through CloudFront: django-storages
+# builds https://<AWS_S3_CUSTOM_DOMAIN>/<key> instead of the bucket's own host.
+# Only the URLs the app writes out change; files are still read and written in the
+# bucket. Empty (the default, and test) keeps today's tieulgnu.s3.amazonaws.com URLs.
+# Prerequisite for locking the bucket to CloudFront (provisioning #105).
+AWS_S3_CUSTOM_DOMAIN = '{{ s3_custom_domain | default('') }}'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': True,
