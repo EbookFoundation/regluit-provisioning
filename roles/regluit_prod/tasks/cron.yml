@@ -60,24 +60,27 @@
     job: "tail -5000 /var/log/celery/w1.log > /var/log/celery/w1.log.tmp && mv /var/log/celery/w1.log.tmp /var/log/celery/w1.log && chown celery:www-data /var/log/celery/w1.log"
     user: root
 
-# Clean up old celery metrics HTML files (older than 30 days)
+# Clean up old celery metrics HTML files (older than 90 days; Eric asked for
+# 90 instead of 30 on 2026-10-28)
 - name: Clean up old celery metrics
   become: yes
   ansible.builtin.cron:
     name: "celery-metrics-cleanup"
     minute: "20"
     hour: "3"
-    job: "find /var/log/celery -name 'metrics-*.html' -mtime +30 -delete"
+    job: "find /var/log/celery -name 'metrics-*.html' -mtime +90 -delete"
     user: root
 
-# Clean up old regluit app logs (older than 30 days)
+# Clean up old regluit app logs (older than 90 days). This includes the rotated
+# downloads.log copies that update_downloads counts each month, so it has to
+# outlast a month comfortably; 90 days per Eric, 2026-10-28.
 - name: Clean up old regluit app logs
   become: yes
   ansible.builtin.cron:
     name: "regluit-log-cleanup"
     minute: "25"
     hour: "3"
-    job: "find /var/log/regluit -name '*.log' -mtime +30 -delete && find /var/log/regluit -name '*.log.*' -mtime +30 -delete"
+    job: "find /var/log/regluit -name '*.log' -mtime +90 -delete && find /var/log/regluit -name '*.log.*' -mtime +90 -delete"
     user: root
 
 # Remove manually-added cron.d file (now managed by Ansible)
