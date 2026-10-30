@@ -130,8 +130,15 @@ LOGGING = {
             'level': 'INFO',
             'class': 'logging.handlers.GroupWriteRotatingFileHandler',
             'filename': join('/var/log/regluit', 'downloads.log'),
-            'maxBytes': 1024*1024*20, # 20 MB
-            'backupCount': 9,
+            # update_downloads counts last month's downloads from these files,
+            # so they must reach back further than a month. Eric (2026-10-28)
+            # asked for 90 days and 12 copies. At ~48k lines/day a 60 MB file
+            # holds ~40 days; bigger files matter more than more copies, because
+            # each rotation also leaves a few near-empty copies (several
+            # processes rotate at once), wasting most of the slots. The cleanup
+            # cron in tasks/cron.yml keeps them 90 days. Worst case ~780 MB.
+            'maxBytes': 1024*1024*60, # 60 MB
+            'backupCount': 12,
             'formatter': 'dl',
         },
     },
