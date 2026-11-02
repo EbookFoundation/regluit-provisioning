@@ -69,3 +69,10 @@ firewall_blocked_sources: []
 # `setup-prod.yml -e test_gate=true` can't gate production.
 test_gate: false
 login_gate_on: "{{ (test_gate | bool) and (deploy_type | default('') == 'test') }}"
+
+# The nightly log copy to S3 (tasks/log_shipping.yml). The script is installed
+# either way; false leaves its cron entry in place but commented out. Off unless
+# a host turns it on, because it needs an instance role attached first (README).
+log_ship_enabled: false
+log_ship_bucket: unglueit-logs
+log_ship_mail_to: "{{ mem_alert_email | default('notices@gluejar.com') }}"

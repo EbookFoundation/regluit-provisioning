@@ -144,3 +144,8 @@ monitoring_alerts_enabled: true
 # (EbookFoundation/security-private#33). This list stays empty; the role's
 # ufw tasks stop rather than add rules on a host where ufw isn't active.
 firewall_blocked_sources: []
+
+# Nightly log copy to S3 (README, "Where the logs are"). Needs the role
+# unglueit-log-shipper-prod attached to this server.
+log_ship_enabled: true
+log_ship_prefix: unglue.it/prod

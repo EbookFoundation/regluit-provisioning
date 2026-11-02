@@ -116,3 +116,12 @@ host_keys:
   aws_storage_bucket_name:  '{{ vault_aws_storage_bucket_name }}'
   cf_turnstile_site_key:  '{{ vault_cf_turnstile_site_key }}'
   cf_turnstile_secret_key:  '{{ vault_cf_turnstile_secret_key }}'
+
+# Nightly log copy to S3: off on test, which is stopped most nights and whose
+# logs aren't worth keeping. To prove a change here first, pass
+# -e log_ship_enabled=true after attaching the role unglueit-log-shipper-test.
+# mem_alert_email isn't set on test, so name the mail's address here rather than
+# let a test failure reach the default notices@ address.
+log_ship_enabled: false
+log_ship_prefix: unglue.it/test
+log_ship_mail_to: "raymond.yee+ungluebugs@gmail.com"
