@@ -135,8 +135,11 @@ class FirstRun(Base):
             f'rotated/unglue.it.log.{sha(b"app rotated" + bytes([10]))}.gz',
             f'metrics/metrics-2026-10-01.html.{sha(b"<html>metrics</html>")}.gz',
             f'sampler/{OLD_DAY}.log.{sha(b"sampler old" + bytes([10]))}.gz',
-            f'live/{day}/downloads.log.gz', f'live/{day}/unglue.it.log.gz',
-            f'live/{day}/doab-harvest.log.gz', f'live/{day}/w1.log.gz', f'live/{day}/error.log.gz',
+            f'live/{day}/downloads.log.{sha(b"downloads now" + bytes([10]))}.gz',
+            f'live/{day}/unglue.it.log.{sha(b"app now" + bytes([10]))}.gz',
+            f'live/{day}/doab-harvest.log.{sha(b"doab" + bytes([10]))}.gz',
+            f'live/{day}/w1.log.{sha(b"celery" + bytes([10]))}.gz',
+            f'live/{day}/error.log.{sha(b"apache undated" + bytes([10]))}.gz',
         ])
         self.assertEqual(self.keys(), expected)
 
@@ -214,14 +217,16 @@ class LaterRuns(Base):
         self.assertIn(first, keys)
         self.assertIn(f'rotated/unglue.it.log.{sha(b"app rotated" + bytes([10]) + b"more lines" + bytes([10]))}.gz', keys)
 
-    def test_live_file_uploads_only_when_changed(self):
+    def test_changed_live_file_keeps_the_earlier_copy(self):
         self.run_ship()
         day = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        relative = f'live/{day}/downloads.log.gz'
+        earlier = f'live/{day}/downloads.log.{sha(b"downloads now" + bytes([10]))}.gz'
+        relative = f'live/{day}/downloads.log.{sha(b"downloads now" + bytes([10]) + b"and more" + bytes([10]))}.gz'
         self.write('var/log/regluit', 'downloads.log', b'downloads now\nand more\n')
         r = self.run_ship()
         self.assertIn('sent=1', r.stdout, r.stdout)
         self.assertEqual(gzip.decompress(self.fetch(relative)['Body'].read()), b'downloads now\nand more\n')
+        self.assertIn(earlier, self.keys())
 
     def test_lost_state_resends_safely_under_the_same_names(self):
         self.run_ship()
@@ -239,11 +244,20 @@ class LaterRuns(Base):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.mails(), 0)
 
+    def test_changed_destination_gets_everything_not_a_false_ok(self):
+        self.run_ship()
+        count = len(self.keys())
+        self.assertTrue(count)
+        r = self.run_ship(ENDPOINT, None, '--min-free-mb', '50', '--prefix', 'unglue.it/elsewhere')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f'sent={count}', r.stdout, r.stdout)
+        self.wipe_bucket()
+
     def test_empty_file_is_skipped_quietly(self):
         self.write('var/log/celery', 'w1.log', b'')
         r = self.run_ship()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertFalse([k for k in self.keys() if k.endswith('/w1.log.gz')])
+        self.assertFalse([k for k in self.keys() if '/w1.log.' in k])
 
 
 class Failures(Base):
@@ -301,6 +315,15 @@ class Failures(Base):
         self.assertIn('stopped early', r.stdout)
         self.assertEqual(self.keys(), [])
         self.assertEqual(self.mails(), 1)
+
+    def test_disk_check_counts_the_size_of_the_file(self):
+        free_mb = shutil.disk_usage(self.tmp).free // (1024 * 1024)
+        # Enough free for the margin alone, but not for the margin plus this file.
+        size = 12 * 1024 * 1024
+        self.write('var/log/apache2', f'{OLDER_DAY}_access.log', b'x' * size)
+        r = self.run_ship(ENDPOINT, None, '--min-free-mb', str(free_mb - 5))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn('stopped early', r.stdout)
 
     def test_no_files_at_all_is_a_problem(self):
         for base in ('var/log/apache2', 'var/log/regluit', 'var/log/celery'):

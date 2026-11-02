@@ -82,7 +82,7 @@ Every night at 01:30 UTC, `/usr/local/sbin/ship_logs.py` copies the server's log
 | `rotated/` | `downloads.log.N`, `unglue.it.log.N` | content hash |
 | `metrics/` | daily metrics pages | date and content hash |
 | `sampler/` | status sampler, one file per finished day | day and content hash |
-| `live/YYYY-MM-DD/` | that night's copy of `downloads.log`, `unglue.it.log`, `doab-harvest.log`, `w1.log`, Apache's `error.log`, `update_downloads.log` | file name |
+| `live/YYYY-MM-DD/` | `downloads.log`, `unglue.it.log`, `doab-harvest.log`, `w1.log`, Apache's `error.log`, `update_downloads.log`, each only if it changed since the last run | file name and content hash |
 
 The hash is the SHA-256 of the uncompressed contents, so you can check a copy: `gunzip -c file.gz | shasum -a 256` should match the name. A file renumbered by rotation, or gzipped by the cleanup job, isn't sent twice. A rotated file that was still being written shows up as more than one object, each a complete copy at that moment, so **overlapping lines are expected**: de-duplicate if you count from them.
 
@@ -92,7 +92,7 @@ The hash is the SHA-256 of the uncompressed contents, so you can check a copy: `
 
 **What it can't do:** a server lost during the day loses up to about a day of logs. `unglue.it.log` rotates fast enough that a busy day could push lines out of its six files between copies. Today's status sampler and dated Apache files wait for the next night.
 
-**The credential** is an instance role, so no key is stored on the server. It may only upload under one folder; it can't read, list or delete. The script ignores every other credential source, so it can't pick up the app's keys. The role does let anyone on the server upload there, and uploading can overwrite, because the bucket has no versioning.
+**The credential** is an instance role, so no key is stored on the server. It may only upload under one folder; it can't read, list or delete. The script turns off the other standard credential sources (environment, `~/.aws`, `~/.boto`), so it won't pick up the app's keys. The role does let anyone on the server upload there, and uploading can overwrite, because the bucket has no versioning.
 
 **Setting a host up** (AWS writes; `HOST` is `prod` or `test`, and the instance ID comes from the console):
 

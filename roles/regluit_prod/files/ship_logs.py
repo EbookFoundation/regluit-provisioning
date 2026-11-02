@@ -12,8 +12,8 @@ What goes where, under s3://<bucket>/<prefix>/:
   sampler/   status sampler days from before today (UTC)
   live/YYYY-MM-DD/  tonight's copy of the files that are still growing
 
-Everything except live/ is named by a SHA-256 of the file's uncompressed
-contents, for two reasons seen on the real servers:
+Everything is named by a SHA-256 of the file's uncompressed contents, so an
+upload can only ever replace identical contents. Two reasons from the real servers:
 
   * Rotation renumbers files, so downloads.log.3 today is downloads.log.4 after
     the next rotation. Syncing by file name would overwrite a different, older
@@ -61,8 +61,7 @@ SAMPLER_DAY = re.compile(r'^(\d{8})\.log$')
 
 
 class Item:
-    """One file to consider. folder and name decide its S3 key; a key made
-    without a hash (live) is replaced each night it changes."""
+    """One file to consider. folder and name, plus its hash, decide its S3 key."""
 
     def __init__(self, path, folder, name, live=False):
         self.path, self.folder, self.name, self.live = path, folder, name, live
@@ -151,12 +150,17 @@ def hash_and_compress(path, tmp_dir):
     return sha.hexdigest(), tmp_path, True
 
 
-def load_state(path):
-    empty = {'seen': {}, 'shipped': {}, 'live': {}}
+def load_state(path, destination):
+    empty = {'destination': destination, 'seen': {}, 'shipped': {}, 'live': {}}
     try:
         with open(path) as f:
             state = json.load(f)
-        return {k: state.get(k, {}) for k in empty}
+        if state.get('destination') != destination:
+            # "Already sent" only means something for one destination. Without
+            # this, a changed folder would report ok while receiving nothing.
+            say(f'destination is now {destination}; sending everything to it')
+            return empty
+        return {k: state.get(k, v) for k, v in empty.items()}
     except FileNotFoundError:
         return empty
     except ValueError as exc:
@@ -227,7 +231,10 @@ def ship(args, today, state, state_path, tmp_dir):
             if already:
                 unchanged += 1
                 continue
-            if shutil.disk_usage(tmp_dir).free < args.min_free_mb * CHUNK:
+            # The compressed copy can't be much bigger than the file, so leave
+            # room for all of it. An existing .gz needs no temporary copy.
+            needed = args.min_free_mb * CHUNK + (0 if item.path.endswith('.gz') else st.st_size)
+            if shutil.disk_usage(tmp_dir).free < needed:
                 problems.append(f'stopped early: under {args.min_free_mb} MB free on the disk')
                 break
             sha, upload_path, ours = hash_and_compress(item.path, tmp_dir)
@@ -238,7 +245,7 @@ def ship(args, today, state, state_path, tmp_dir):
                 if state['live'].get(item.name) == sha:
                     unchanged += 1
                     continue
-                relative = f'live/{live_day}/{item.name}.gz'
+                relative = f'live/{live_day}/{item.name}.{sha}.gz'
             else:
                 relative = f'{item.folder}/{item.name}.{sha}.gz'
                 if relative in state['shipped']:     # renumbered or gzipped since
@@ -324,7 +331,7 @@ def main():
     p.add_argument('--state-dir', default='/var/lib/log_ship')
     p.add_argument('--sendmail', default='/usr/sbin/sendmail')
     p.add_argument('--min-free-mb', type=int, default=2048,
-                   help='stop compressing below this much free disk: a copy must never fill the disk')
+                   help='stop rather than leave less than this free after compressing a file')
     p.add_argument('--root', default='/', help='for tests: where var/log is')
     p.add_argument('--home', default=os.path.expanduser('~'))
     p.add_argument('--test-endpoint', help='for tests: an S3 lookalike, using keys from the environment')
@@ -369,7 +376,7 @@ def main():
     shutil.rmtree(tmp_dir, ignore_errors=True)   # anything left here is from a killed run
     os.makedirs(tmp_dir)
     started = time.monotonic()
-    state = load_state(state_path)
+    state = load_state(state_path, f'{args.bucket}/{args.prefix}')
     try:
         shipped, unchanged, sent_bytes, problems = ship(args, today, state, state_path, tmp_dir)
     except Exception as exc:

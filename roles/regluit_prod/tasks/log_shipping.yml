@@ -36,7 +36,8 @@
 # the 03:00 cleanup and 03:10 compression jobs in cron.yml.
 # Not root: membership of adm and www-data is enough to read every log, and it's
 # the same reasoning as the status sampler's (see status_sampler.sh).
-# Lowest CPU and disk priority, so it can't compete with the site.
+# Lowest CPU and disk priority, so it gives way to the site for those. It still
+# uses some memory and network while it runs.
 - name: Schedule the log copy (nightly)
   become: yes
   ansible.builtin.cron:
@@ -46,7 +47,7 @@
     user: "{{ user_name }}"
     job: >-
       nice -n 19 ionice -c 3 /usr/bin/python3 /usr/local/sbin/ship_logs.py
-      --bucket {{ log_ship_bucket }} --prefix {{ log_ship_prefix }}
-      --mail-to {{ log_ship_mail_to }} --mail-from {{ default_from_email | default('notices@gluejar.com') }}
+      --bucket {{ log_ship_bucket | quote }} --prefix {{ log_ship_prefix | quote }}
+      --mail-to {{ log_ship_mail_to | quote }} --mail-from {{ default_from_email | default('notices@gluejar.com') | quote }}
       >> /var/log/regluit/ship_logs.log 2>&1
     disabled: "{{ not (log_ship_enabled | bool) }}"
