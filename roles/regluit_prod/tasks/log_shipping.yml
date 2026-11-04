@@ -38,6 +38,8 @@
 # the same reasoning as the status sampler's (see status_sampler.sh).
 # Lowest CPU and disk priority, so it gives way to the site for those. It still
 # uses some memory and network while it runs.
+# Each value is shell-quoted, then any % escaped: cron ends a command at an
+# unescaped % (crontab(5)), which quoting alone doesn't prevent.
 - name: Schedule the log copy (nightly)
   become: yes
   ansible.builtin.cron:
@@ -47,7 +49,9 @@
     user: "{{ user_name }}"
     job: >-
       nice -n 19 ionice -c 3 /usr/bin/python3 /usr/local/sbin/ship_logs.py
-      --bucket {{ log_ship_bucket | quote }} --prefix {{ log_ship_prefix | quote }}
-      --mail-to {{ log_ship_mail_to | quote }} --mail-from {{ default_from_email | default('notices@gluejar.com') | quote }}
+      --bucket {{ log_ship_bucket | quote | replace('%', '\%') }}
+      --prefix {{ log_ship_prefix | quote | replace('%', '\%') }}
+      --mail-to {{ log_ship_mail_to | quote | replace('%', '\%') }}
+      --mail-from {{ default_from_email | default('notices@gluejar.com') | quote | replace('%', '\%') }}
       >> /var/log/regluit/ship_logs.log 2>&1
     disabled: "{{ not (log_ship_enabled | bool) }}"

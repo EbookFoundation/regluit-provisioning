@@ -411,5 +411,26 @@ class ChecksTakeNoSettings(unittest.TestCase):
         self.assertIn('required to copy', r.stderr)
 
 
+class GrowingFile(unittest.TestCase):
+    """A file still being written is copied only up to its size at the disk
+    check, so its copy can't outgrow the room reserved for it."""
+
+    def test_copy_stops_at_the_size_it_was_given(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('ship_logs', SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 'downloads.log')
+            first, later = os.urandom(3 * 1024 * 1024 + 7), b'appended after the check\n' * 1000
+            with open(path, 'wb') as f:
+                f.write(first + later)
+            digest, copy, ours = mod.hash_and_compress(path, d, len(first))
+            self.assertTrue(ours)
+            with gzip.open(copy, 'rb') as g:
+                self.assertEqual(g.read(), first)
+            self.assertEqual(digest, sha(first))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

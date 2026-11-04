@@ -125,10 +125,13 @@ def collect(root, home, today):
     return items, problems
 
 
-def hash_and_compress(path, tmp_dir):
+def hash_and_compress(path, tmp_dir, limit):
     """Read the file once, returning (sha256 of uncompressed contents, path of a
     gzip copy to upload, whether that copy is ours to delete). One pass, so the
-    hash always describes exactly the bytes uploaded, even if the file is growing.
+    hash always describes exactly the bytes uploaded.
+    A plain file is read only up to `limit` bytes, its size when the disk check
+    ran, so a file still being written can't outgrow the room reserved for its
+    copy. Lines added later go in the next run's copy.
     An existing .gz is uploaded as it is, once we've read it through to prove it
     isn't truncated."""
     sha = hashlib.sha256()
@@ -141,7 +144,12 @@ def hash_and_compress(path, tmp_dir):
     try:
         with open(path, 'rb') as src, os.fdopen(fd, 'wb') as raw, \
                 gzip.GzipFile(fileobj=raw, mode='wb', compresslevel=6, mtime=0) as out:
-            for chunk in iter(lambda: src.read(CHUNK), b''):
+            remaining = limit
+            while remaining > 0:
+                chunk = src.read(min(CHUNK, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
                 sha.update(chunk)
                 out.write(chunk)
     except BaseException:
@@ -231,13 +239,16 @@ def ship(args, today, state, state_path, tmp_dir):
             if already:
                 unchanged += 1
                 continue
-            # The compressed copy can't be much bigger than the file, so leave
-            # room for all of it. An existing .gz needs no temporary copy.
-            needed = args.min_free_mb * CHUNK + (0 if item.path.endswith('.gz') else st.st_size)
+            # Leave room for the whole compressed copy. Only st_size bytes are
+            # read (see hash_and_compress), and gzip can come out a little
+            # bigger than incompressible input, so allow 1% plus 1 MB over it.
+            # An existing .gz needs no temporary copy.
+            copy_room = 0 if item.path.endswith('.gz') else st.st_size + st.st_size // 100 + CHUNK
+            needed = args.min_free_mb * CHUNK + copy_room
             if shutil.disk_usage(tmp_dir).free < needed:
                 problems.append(f'stopped early: under {args.min_free_mb} MB free on the disk')
                 break
-            sha, upload_path, ours = hash_and_compress(item.path, tmp_dir)
+            sha, upload_path, ours = hash_and_compress(item.path, tmp_dir, st.st_size)
             if ours:
                 tmp_copy = upload_path
             seen_now[fingerprint] = sha
