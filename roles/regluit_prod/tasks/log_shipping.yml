@@ -1,0 +1,57 @@
+---
+# Nightly copy of this server's logs to S3. See files/ship_logs.py for what it
+# copies and why; README.md "Where the logs are" for how to get them back.
+#
+# Before turning it on for a host, that host needs an instance role allowed to
+# upload under its folder (README). Without one the job fails and sends mail
+# once; it harms nothing.
+
+- name: Install the system boto3 the log copy runs on
+  become: yes
+  apt:
+    name: python3-boto3
+    state: present
+    # Same reasoning as "Install prod dependencies" in main.yml.
+    fail_on_autoremove: true
+
+- name: Create the log copy's state folder
+  become: yes
+  file:
+    path: /var/lib/log_ship
+    state: directory
+    owner: "{{ user_name }}"
+    group: "{{ user_name }}"
+    mode: "0750"
+
+- name: Install the log copy script
+  become: yes
+  copy:
+    src: ship_logs.py
+    dest: /usr/local/sbin/ship_logs.py
+    owner: root
+    group: root
+    mode: "0755"
+
+# 01:30 UTC (the servers run on UTC): after Apache's midnight rollover, before
+# the 03:00 cleanup and 03:10 compression jobs in cron.yml.
+# Not root: membership of adm and www-data is enough to read every log, and it's
+# the same reasoning as the status sampler's (see status_sampler.sh).
+# Lowest CPU and disk priority, so it gives way to the site for those. It still
+# uses some memory and network while it runs.
+# Each value is shell-quoted, then any % escaped: cron ends a command at an
+# unescaped % (crontab(5)), which quoting alone doesn't prevent.
+- name: Schedule the log copy (nightly)
+  become: yes
+  ansible.builtin.cron:
+    name: "log-ship"
+    minute: "30"
+    hour: "1"
+    user: "{{ user_name }}"
+    job: >-
+      nice -n 19 ionice -c 3 /usr/bin/python3 /usr/local/sbin/ship_logs.py
+      --bucket {{ log_ship_bucket | quote | replace('%', '\%') }}
+      --prefix {{ log_ship_prefix | quote | replace('%', '\%') }}
+      --mail-to {{ log_ship_mail_to | quote | replace('%', '\%') }}
+      --mail-from {{ default_from_email | default('notices@gluejar.com') | quote | replace('%', '\%') }}
+      >> /var/log/regluit/ship_logs.log 2>&1
+    disabled: "{{ not (log_ship_enabled | bool) }}"

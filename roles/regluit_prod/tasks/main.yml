@@ -337,6 +337,10 @@
 - name: Run log management tasks
   import_tasks: log_management.yml
 
+- name: Run the nightly log copy tasks
+  import_tasks: log_shipping.yml
+  tags: [log-shipping]
+
 - name: Run OS patching / auto-reboot policy tasks
   import_tasks: patching.yml
   tags: [config, patching]

@@ -72,6 +72,50 @@ ansible-playbook -i hosts setup-test.yml --tags apache-config -e test_gate=false
 ansible-playbook -i hosts setup-test.yml --tags apache-config -e test_gate=true
 ```
 
+## Where the logs are
+
+Every night at 01:30 UTC, `/usr/local/sbin/ship_logs.py` copies the server's logs to `s3://unglueit-logs/unglue.it/prod/`. **It only copies.** It deletes nothing on the server and changes no rotation or cleanup job, so the server's own keeping times still apply there. Nothing in this S3 folder expires yet.
+
+| S3 folder | What | Named by |
+| --- | --- | --- |
+| `apache/` | Apache access and error logs, one file per finished day | day and content hash |
+| `rotated/` | `downloads.log.N`, `unglue.it.log.N` | content hash |
+| `metrics/` | daily metrics pages | date and content hash |
+| `sampler/` | status sampler, one file per finished day | day and content hash |
+| `live/YYYY-MM-DD/` | `downloads.log`, `unglue.it.log`, `doab-harvest.log`, `w1.log`, Apache's `error.log`, `update_downloads.log`, each only if it changed since the last run | file name and content hash |
+
+The hash is the SHA-256 of the uncompressed contents, so you can check a copy: `gunzip -c file.gz | shasum -a 256` should match the name. A file renumbered by rotation, or gzipped by the cleanup job, isn't sent twice. A rotated file that was still being written shows up as more than one object, each a complete copy at that moment, so **overlapping lines are expected**: de-duplicate if you count from them.
+
+**Is it working?** `scripts/check_log_ship.sh` (run it from a laptop; it only reads) shows the newest object and its age, and exits 1 past 36 hours. Nothing checks this automatically, and a job that never starts can't report itself. A job that runs and fails mails `log_ship_mail_to` once, then again only after a good run. On the server: `/var/log/regluit/ship_logs.log`; `ship_logs.py --help` lists `--dry-run` and `--whoami`.
+
+**Getting a file back:** `aws s3 ls s3://unglueit-logs/unglue.it/prod/apache/ | grep 20261030`, then `aws s3 cp` and `gunzip`.
+
+**What it can't do:** a server lost during the day loses up to about a day of logs. `unglue.it.log` rotates fast enough that a busy day could push lines out of its six files between copies. Today's status sampler and dated Apache files wait for the next night.
+
+**The credential** is an instance role, so no key is stored on the server. It may only upload under one folder; it can't read, list or delete. The script turns off the other standard credential sources (environment, `~/.aws`, `~/.boto`), so it won't pick up the app's keys. The role does let anyone on the server upload there, and uploading can overwrite, because the bucket has no versioning.
+
+**Setting a host up** (AWS writes; `HOST` is `prod` or `test`, and the instance ID comes from the console):
+
+```bash
+HOST=prod; INSTANCE=i-...; ROLE=unglueit-log-shipper-$HOST
+aws iam create-role --role-name $ROLE --assume-role-policy-document \
+  '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+aws iam put-role-policy --role-name $ROLE --policy-name upload-logs --policy-document \
+  '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:AbortMultipartUpload"],"Resource":"arn:aws:s3:::unglueit-logs/unglue.it/'$HOST'/*"}]}'
+aws iam create-instance-profile --instance-profile-name $ROLE
+aws iam add-role-to-instance-profile --instance-profile-name $ROLE --role-name $ROLE
+aws ec2 associate-iam-instance-profile --instance-id $INSTANCE --iam-instance-profile Name=$ROLE
+```
+
+Attaching a role needs no restart. Then install with a narrow run, and try it once by hand:
+
+```bash
+ansible-playbook -i hosts setup-prod.yml --tags log-shipping      # never --diff
+ssh ubuntu@unglue.it '/usr/local/sbin/ship_logs.py --whoami'      # should name the role
+```
+
+**Tests:** `tests/log_shipper/test.sh` runs the script end to end in throwaway containers (needs docker).
+
 ## Python and security updates
 
 The servers use Ubuntu 24.04's own Python (`python3.12`); we don't build or install upstream Python. Decided 2026-10-26 (#102).
