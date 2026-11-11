@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # aws_setup.sh - the AWS pieces the playbooks don't build (docs/AWS_SETUP.md).
-# Issue #109. Run from a laptop with the AWS CLI and jq.
+# Issue #109. Run from a laptop with the AWS CLI, jq and curl.
 #
 #   scripts/aws_setup.sh check [prod|test|all]      (default: all)
 #
@@ -15,9 +15,19 @@
 # Servers are found through DNS (name -> Elastic IP -> instance), not by
 # instance name, so the check keeps working after a rebuild.
 #
-# Planned in #109, not here yet: `create` (one environment's machine, role
-# and address; test only by default) and `cutover` (move the address/DNS,
-# with confirmation). Shared security groups will stay check-only.
+#   scripts/aws_setup.sh create test [--ami <id> --yes]
+#   scripts/aws_setup.sh cutover test [--expect-current <ip> --yes]
+#
+# create: a replacement machine and Elastic IP for one environment, tagged
+#   unglueit:candidate=<env>, next to the live one. Without --yes it prints
+#   the plan and asks AWS (--dry-run) whether it would be allowed; nothing is
+#   made. Reuses an existing candidate. Never touches the live machine, its
+#   address, DNS, databases or security groups; won't create IAM roles.
+# cutover: points the environment's DNS name at the candidate, only with
+#   --yes AND --expect-current <the address it points at now>, and only if
+#   the candidate answers HTTPS for that name. Leaves both machines running.
+# Both refuse prod (#109: only after a test rebuild has worked end to end).
+# Shared security groups are only ever checked.
 
 set -u
 set -o pipefail
@@ -79,7 +89,6 @@ same() {   # same <label> <expected> <actual>
     if [ "$2" = "$3" ]; then ok "$1: $3"; else diff_ "$1: expected $2, got ${3:-nothing}"; fi
 }
 
-usage() { echo "usage: $0 check [prod|test|all]" >&2; exit 2; }
 
 guard() {
     command -v jq >/dev/null || { echo "REFUSED: jq is required" >&2; exit 2; }
@@ -253,9 +262,246 @@ check_shared() {
     fi
 }
 
+# --- create / cutover (one environment's machine; test only for now) ----------
+# Tag on a machine and its Elastic IP while it is the not-yet-live replacement.
+CANDIDATE_TAG=unglueit:candidate
+UBUNTU_SSM=/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+KEY_PAIR=production
+
+die() { echo "STOP: $*" >&2; exit 1; }
+refuse_prod() {
+    [ "$1" = test ] && return 0
+    echo "REFUSED: '$2 $1' is not enabled. #109: production comes only after a test rebuild has worked end to end." >&2
+    exit 2
+}
+
+# The live machine for an environment, via DNS -> Elastic IP -> instance.
+# Prints: ip instance subnet vpc
+live_machine() {
+    local env=$1 dns ip inst
+    dns=$(expect "$env" dns)
+    ip=$(record "$dns" A | jq -r '.ResourceRecords[0].Value // empty')
+    [ -n "$ip" ] || die "no A record for $dns"
+    inst=$(AWS_TRY ec2 describe-addresses --public-ips "$ip" --query 'Addresses[0].InstanceId' --output text)
+    case "$inst" in i-*) ;; *) die "$dns -> $ip is not an Elastic IP on a machine" ;; esac
+    local rest; rest=$(AWS ec2 describe-instances --instance-ids "$inst" \
+        --query 'Reservations[0].Instances[0].[InstanceId,SubnetId,VpcId]' --output text) || die "can't read $inst"
+    echo "$ip $rest"
+}
+
+# The candidate machine for an environment, if any (not terminated).
+candidate_instance() {
+    AWS ec2 describe-instances --filters "Name=tag:$CANDIDATE_TAG,Values=$1" \
+        Name=instance-state-name,Values=pending,running,stopping,stopped \
+        --query 'Reservations[].Instances[].InstanceId' --output text || die "can't list candidate machines"
+}
+candidate_address() {   # prints: allocation-id public-ip associated-instance
+    AWS ec2 describe-addresses --filters "Name=tag:$CANDIDATE_TAG,Values=$1" \
+        --query 'Addresses[].[AllocationId,PublicIp,InstanceId]' --output text || die "can't list candidate addresses"
+}
+
+# A reusable candidate must be exactly one machine that is NOT the live one,
+# in the live machine's VPC and subnet, of the right type and profile, with no
+# Elastic IP other than the candidate address. Prints its id, or stops.
+validate_candidate() {   # validate_candidate <env> <candidates> <live-inst> <vpc> <subnet> <candidate-alloc-or-empty>
+    local env=$1 cands=$2 live=$3 vpc=$4 subnet=$5 calloc=$6 c j
+    [ "$(wc -w <<<"$cands")" -eq 1 ] || die "more than one machine tagged $CANDIDATE_TAG=$env: $cands; sort that out by hand"
+    c=$cands
+    [ "$c" != "$live" ] || die "the LIVE machine $live carries the $CANDIDATE_TAG tag; remove the tag before going on"
+    j=$(AWS ec2 describe-instances --instance-ids "$c" --query 'Reservations[0].Instances[0]' --output json) || die "can't read candidate $c"
+    [ "$(jq -r .VpcId <<<"$j")" = "$vpc" ] || die "candidate $c is in another VPC"
+    [ "$(jq -r .SubnetId <<<"$j")" = "$subnet" ] || die "candidate $c is in another subnet"
+    [ "$(jq -r .InstanceType <<<"$j")" = "$(expect "$env" type)" ] || die "candidate $c is $(jq -r .InstanceType <<<"$j"), not $(expect "$env" type)"
+    [ "$(jq -r '.IamInstanceProfile.Arn // "" | split("/") | last' <<<"$j")" = "$(expect "$env" profile)" ] || die "candidate $c doesn't have profile $(expect "$env" profile)"
+    case "$(jq -r .State.Name <<<"$j")" in pending|running) ;; *) die "candidate $c is $(jq -r .State.Name <<<"$j"); start or terminate it by hand" ;; esac
+    [ "$(jq -c '[.SecurityGroups[].GroupName]' <<<"$j")" = "[\"$APP_SG\"]" ] || die "candidate $c's security groups aren't exactly $APP_SG"
+    local img; img=$(AWS ec2 describe-images --image-ids "$(jq -r .ImageId <<<"$j")" --query 'Images[0].[OwnerId,Name]' --output text) || die "can't read candidate image"
+    case "$img" in "$UBUNTU_OWNER"*ubuntu-noble-24.04-amd64-server*) ;; *) die "candidate $c isn't on an official Ubuntu 24.04 image ($img)" ;; esac
+    local vol; vol=$(jq -r --arg r "$(jq -r .RootDeviceName <<<"$j")" '.BlockDeviceMappings[] | select(.DeviceName==$r) | .Ebs.VolumeId' <<<"$j")
+    local v; v=$(AWS ec2 describe-volumes --volume-ids "$vol" --query 'Volumes[0].[Size,VolumeType,Encrypted]' --output text) || die "can't read candidate disk"
+    local vsize vtype venc; read -r vsize vtype venc <<<"$v"
+    { [ "$vsize" -ge "$MIN_DISK_GB" ] && [ "$vtype" = gp3 ] && [ "$venc" = True ]; } || die "candidate $c's root disk is $v, not >= $MIN_DISK_GB GB gp3 encrypted"
+    local others; others=$(AWS ec2 describe-addresses --filters Name=instance-id,Values="$c" --query 'Addresses[].AllocationId' --output text) || die "can't read candidate addresses"
+    for a in $others; do [ "$a" = "$calloc" ] || die "candidate $c already has another Elastic IP ($a)"; done
+    echo "$c"
+}
+
+cmd_create() {
+    local env=$1 yes=$2 want_ami=$3
+    refuse_prod "$env" create
+    local live ip inst subnet vpc
+    live=$(live_machine "$env") || exit 1
+    read -r ip inst subnet vpc <<<"$live"
+    echo "live $env machine: $inst ($ip), subnet $subnet, VPC $vpc"
+
+    local sg sgvpc
+    read -r sg sgvpc <<<"$(AWS ec2 describe-security-groups --filters Name=group-name,Values="$APP_SG" \
+        --query 'SecurityGroups[0].[GroupId,VpcId]' --output text)" || die "can't read $APP_SG"
+    [ "$sgvpc" = "$vpc" ] || die "$APP_SG is in $sgvpc but the live machine is in $vpc"
+
+    local profile; profile=$(expect "$env" profile)
+    local proles; proles=$(AWS_TRY iam get-instance-profile --instance-profile-name "$profile" --query 'InstanceProfile.Roles[].RoleName' --output json) \
+        || die "instance profile $profile doesn't exist. Creating IAM roles is a deliberate human step: see docs/AWS_SETUP.md section 6."
+    [ "$(jq -c . <<<"$proles")" = "[\"$profile\"]" ] || die "instance profile $profile should hold exactly the role $profile; it holds $proles"
+
+    local ami owner rootdev
+    ami=$(AWS ssm get-parameter --name "$UBUNTU_SSM" --query Parameter.Value --output text) || die "can't read the current Ubuntu image ID"
+    read -r owner rootdev <<<"$(AWS ec2 describe-images --image-ids "$ami" --query 'Images[0].[OwnerId,RootDeviceName]' --output text)" || die "can't read image $ami"
+    [ "$owner" = "$UBUNTU_OWNER" ] || die "image $ami is owned by $owner, not Canonical"
+    if [ "$yes" = yes ] && [ "$want_ami" != "$ami" ]; then
+        die "--yes needs --ami $ami (the image this plan shows), so what launches is what you reviewed; got '${want_ami:-nothing}'"
+    fi
+
+    # The role must already be right: log copy and, for DNS-01, its own ACME record.
+    local before=$N_DIFF
+    check_role "$env" "$profile" "$(expect "$env" dns)" >/dev/null
+    [ "$N_DIFF" -eq "$before" ] || die "role $profile isn't as docs/AWS_SETUP.md section 6 describes; run: $0 check $env"
+
+    local name; name="$env-$(date +%Y-%m-%d)"
+    local addr; addr=$(candidate_address "$env")
+    [ "$(wc -l <<<"${addr:-x}" | tr -d ' ')" -le 1 ] || die "more than one Elastic IP tagged $CANDIDATE_TAG=$env"
+    local calloc cip con; read -r calloc cip con <<<"$addr"
+    [ "$cip" != "$ip" ] || die "the LIVE address $ip carries the $CANDIDATE_TAG tag; remove the tag before going on"
+    local existing; existing=$(candidate_instance "$env")
+    [ -z "$existing" ] || existing=$(validate_candidate "$env" "$existing" "$inst" "$vpc" "$subnet" "$calloc") || exit 1
+    case "$con" in ""|None|"$existing") ;; *) die "candidate address $cip is attached to $con, which isn't the candidate machine" ;; esac
+    local type; type=$(expect "$env" type)
+    local tags="ResourceType=instance,Tags=[{Key=Name,Value=$name},{Key=$CANDIDATE_TAG,Value=$env}]"
+    local bdm="DeviceName=$rootdev,Ebs={VolumeSize=$MIN_DISK_GB,VolumeType=gp3,DeleteOnTermination=true,Encrypted=true}"
+    local run=(ec2 run-instances --image-id "$ami" --instance-type "$type" --subnet-id "$subnet"
+               --security-group-ids "$sg" --key-name "$KEY_PAIR" --iam-instance-profile "Name=$profile"
+               --block-device-mappings "$bdm" --metadata-options HttpTokens=required,HttpEndpoint=enabled
+               --tag-specifications "$tags" "ResourceType=volume,Tags=[{Key=Name,Value=$name}]" --count 1)
+
+    echo
+    echo "== plan: create $env"
+    if [ -n "$existing" ]; then echo "  machine: reuse existing candidate $existing"
+    else echo "  machine: launch $name: $type, image $ami (Ubuntu 24.04, Canonical), $MIN_DISK_GB GB gp3 encrypted, $APP_SG, key $KEY_PAIR, profile $profile, IMDSv2 required"; fi
+    if [ -n "$addr" ]; then echo "  address: reuse candidate Elastic IP $cip"
+    else echo "  address: allocate a new Elastic IP tagged $CANDIDATE_TAG=$env"; fi
+    echo "  not touched: the live machine $inst, its address $ip, DNS, databases, security groups"
+
+    if [ "$yes" != yes ]; then
+        echo
+        if [ -z "$existing" ]; then
+            local out; out=$(aws --profile "$PROFILE" --region "$REGION" "${run[@]}" --dry-run 2>&1)
+            case "$out" in *DryRunOperation*) echo "permission check (AWS --dry-run): launch would be allowed" ;;
+                *) echo "permission check (AWS --dry-run) FAILED: $out" >&2; exit 1 ;; esac
+        fi
+        if [ -z "$addr" ]; then
+            local out2; out2=$(aws --profile "$PROFILE" --region "$REGION" ec2 allocate-address --domain vpc --dry-run 2>&1)
+            case "$out2" in *DryRunOperation*) echo "permission check (AWS --dry-run): address allocation would be allowed" ;;
+                *) echo "permission check (AWS --dry-run) FAILED: $out2" >&2; exit 1 ;; esac
+        fi
+        local live_alloc; live_alloc=$(AWS ec2 describe-addresses --public-ips "$ip" --query 'Addresses[0].AllocationId' --output text) || die "can't read $ip"
+        local out3; out3=$(aws --profile "$PROFILE" --region "$REGION" ec2 associate-address --allocation-id "$live_alloc" \
+            --instance-id "$inst" --no-allow-reassociation --dry-run 2>&1)
+        case "$out3" in *DryRunOperation*) echo "permission check (AWS --dry-run): attaching an address would be allowed" ;;
+            *) echo "permission check (AWS --dry-run) FAILED: $out3" >&2; exit 1 ;; esac
+        echo "Plan only: nothing created. To do it: $0 create $env --ami $ami --yes"
+        return 0
+    fi
+
+    partial() { die "$1. What exists now: machine ${existing:-none}, address ${cip:-none} (both tagged $CANDIDATE_TAG=$env). Re-running create reuses them; to undo: terminate the machine, release the address."; }
+    if [ -z "$existing" ]; then
+        existing=$(AWS "${run[@]}" --query 'Instances[0].InstanceId' --output text) || partial "launch failed"
+        echo "launched $existing; waiting for it to run..."
+        AWS ec2 wait instance-running --instance-ids "$existing" || partial "$existing didn't reach running"
+    fi
+    if [ -z "$addr" ]; then
+        local alloc; alloc=$(AWS ec2 allocate-address --domain vpc \
+            --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=$name},{Key=$CANDIDATE_TAG,Value=$env}]" \
+            --query AllocationId --output text) || partial "address allocation failed"
+        addr=$(candidate_address "$env"); read -r calloc cip con <<<"$addr"
+    fi
+    local alloc_id=$calloc new_ip=$cip
+    if [ "$con" != "$existing" ]; then
+        AWS ec2 associate-address --allocation-id "$alloc_id" --instance-id "$existing" --no-allow-reassociation >/dev/null \
+            || partial "couldn't attach $new_ip to $existing"
+    fi
+    echo
+    echo "created: $existing with $new_ip (candidate; $(expect "$env" dns) still points at $ip)"
+    echo "next:"
+    echo "  1. build it:  ansible-playbook -i hosts setup-$env.yml -e ansible_host=$new_ip"
+    echo "     (stop celery on one of the two machines while both point at the same database)"
+    echo "  2. check it:  curl --resolve $(expect "$env" dns):443:$new_ip https://$(expect "$env" dns)/  (and click around the same way)"
+    echo "  3. switch:    scripts/aws_setup.sh cutover $env --expect-current $ip"
+}
+
+cmd_cutover() {
+    local env=$1 yes=$2 expect_current=$3
+    refuse_prod "$env" cutover
+    local dns; dns=$(expect "$env" dns)
+    local live ip inst subnet vpc; live=$(live_machine "$env") || exit 1
+    read -r ip inst subnet vpc <<<"$live"
+    local cand; cand=$(candidate_instance "$env")
+    [ -n "$cand" ] || die "no candidate machine tagged $CANDIDATE_TAG=$env; run create first"
+    local alloc_id new_ip on; read -r alloc_id new_ip on <<<"$(candidate_address "$env")"
+    cand=$(validate_candidate "$env" "$cand" "$inst" "$vpc" "$subnet" "$alloc_id") || exit 1
+    [ -n "$new_ip" ] || die "the candidate has no candidate Elastic IP"
+    [ "$on" = "$cand" ] || die "candidate address $new_ip is attached to '$on', not $cand"
+    [ "$new_ip" != "$ip" ] || die "$dns already points at the candidate ($ip)"
+    local st; st=$(AWS ec2 describe-instances --instance-ids "$cand" --query 'Reservations[0].Instances[0].State.Name' --output text)
+    [ "$st" = running ] || die "candidate $cand is $st"
+    local code; code=$(curl -s -o /dev/null -m 30 -w '%{http_code}' --resolve "$dns:443:$new_ip" "https://$dns/" || true)
+    case "$code" in 200|301|302|401) ;; *) die "candidate doesn't answer https://$dns/ properly (HTTP $code); build and check it first" ;; esac
+
+    echo "== plan: cutover $env"
+    echo "  $dns A: $ip ($inst)  ->  $new_ip ($cand); TTL $(record "$dns" A | jq -r .TTL)s"
+    echo "  candidate answers https://$dns/ with HTTP $code (certificate valid for $dns)"
+    echo "  not touched: either machine's state, addresses, databases"
+    [ "$yes" = yes ] || { echo "Plan only. To switch: scripts/aws_setup.sh cutover $env --expect-current $ip --yes"; return 0; }
+    [ "$expect_current" = "$ip" ] || die "--expect-current must be the address $dns points at now ($ip); got '${expect_current:-nothing}'"
+
+    # One batch: DELETE the exact record we expect, CREATE the new one. If the
+    # record changed since we read it, Route 53 rejects the whole batch.
+    local cur; cur=$(record "$dns" A)
+    [ "$(jq -c '[.ResourceRecords[].Value]' <<<"$cur")" = "[\"$ip\"]" ] || die "$dns has more than one A value; switch it by hand"
+    local batch; batch=$(jq -cn --argjson old "$cur" --arg v "$new_ip" \
+        '{Comment:"aws_setup.sh cutover",Changes:[{Action:"DELETE",ResourceRecordSet:$old},
+          {Action:"CREATE",ResourceRecordSet:($old|.ResourceRecords=[{Value:$v}])}]}')
+    local back; back=$(jq -c --argjson new "$(jq -c '.Changes[1].ResourceRecordSet' <<<"$batch")" \
+        '{Comment:"aws_setup.sh cutover rollback",Changes:[{Action:"DELETE",ResourceRecordSet:$new},{Action:"CREATE",ResourceRecordSet:.Changes[0].ResourceRecordSet}]}' <<<"$batch")
+    local change; change=$(AWS route53 change-resource-record-sets --hosted-zone-id "$(zone_id)" --change-batch "$batch" \
+        --query ChangeInfo.Id --output text) || die "DNS change failed"
+    AWS route53 wait resource-record-sets-changed --id "$change" || die "DNS change $change didn't complete"
+    echo
+    echo "switched: $dns -> $new_ip ($cand). Old machine $inst ($ip) left running."
+    echo "to switch back, restore the record:"
+    echo "  aws route53 change-resource-record-sets --hosted-zone-id $(zone_id) --change-batch '$back'"
+    echo "after checking the site: stop $inst, keep it 24 hours, then terminate it and release $ip;"
+    echo "  remove the $CANDIDATE_TAG tag from $cand and its address."
+}
+
 # --- main ----------------------------------------------------------------------------
-[ "${1:-}" = check ] || usage
-SCOPE="${2:-all}"
+usage() {
+    echo "usage: $0 check [prod|test|all]" >&2
+    echo "       $0 create test [--ami <id> --yes]" >&2
+    echo "       $0 cutover test [--expect-current <ip> --yes]" >&2
+    exit 2
+}
+ACTION="${1:-}"; shift || true
+case "$ACTION" in
+    create|cutover)
+        ENVNAME="${1:-}"; shift || true
+        case "$ENVNAME" in prod|test) ;; *) usage ;; esac
+        YES=no; EXPECT_CURRENT=""; WANT_AMI=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --yes) YES=yes ;;
+                --expect-current) EXPECT_CURRENT="${2:-}"; shift ;;
+                --ami) WANT_AMI="${2:-}"; shift ;;
+                *) usage ;;
+            esac; shift
+        done
+        guard
+        if [ "$ACTION" = create ]; then cmd_create "$ENVNAME" "$YES" "$WANT_AMI"; else cmd_cutover "$ENVNAME" "$YES" "$EXPECT_CURRENT"; fi
+        [ ! -s "$FAILFLAG" ] || { echo "STOP: an AWS call failed (see ERROR above)" >&2; exit 1; }
+        exit 0 ;;
+    check) ;;
+    *) usage ;;
+esac
+SCOPE="${1:-all}"
 case "$SCOPE" in prod|test|all) ;; *) usage ;; esac
 guard
 case "$SCOPE" in
