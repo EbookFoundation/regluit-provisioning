@@ -21,6 +21,11 @@ git_branch: "master"
 # using the webroot + deploy-hook arrangement test has run since 2026-08-18.
 manage_certs: false
 certbot_manage: true
+# DNS-01 through Route 53 (defaults/main.yml), so a brand-new test machine can
+# get its certificate before DNS points at it. Needs the role permission in
+# docs/AWS_SETUP.md section 6. Switching an existing machine is one command
+# on the box (the precheck prints it): certbot reconfigure --dns-route53.
+certbot_challenge: dns-route53
 # Login gate in front of the whole HTTPS site (apache.conf.j2), so crawlers get
 # a cheap 401 instead of Django pages. Added 2026-10-26 after a distributed
 # scraper pinned test's CPU. To let real traffic in for a while:

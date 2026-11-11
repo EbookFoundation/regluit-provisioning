@@ -32,6 +32,14 @@ email_safe_mode_redirect_to: ""
 certbot_manage: false
 certbot_webroot: /var/lib/letsencrypt
 certbot_email: support@ebookfoundation.org
+# How certbot proves we control the name (tasks/certs_certbot.yml):
+#   webroot      HTTP-01 through the port-80 vhost. Works only once DNS already
+#                points at this machine.
+#   dns-route53  DNS-01 through certbot's Route 53 plugin. Works before DNS
+#                moves, so a brand-new machine can get its certificate. Needs
+#                the machine's IAM role to allow changing its own
+#                _acme-challenge TXT record (docs/AWS_SETUP.md, section 6).
+certbot_challenge: webroot
 
 # Apache timeouts (templates/regluit-timeouts.conf.j2, issue #81). Before this,
 # the box ran Ubuntu's stock values, which no playbook set.

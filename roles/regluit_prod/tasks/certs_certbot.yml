@@ -4,10 +4,18 @@
 # apache can start with only the port-80 vhost, serve the challenge, and pick
 # up the HTTPS vhost once the certificate exists.
 
-- name: Install certbot
+- name: certbot_challenge must be a method this role knows
+  ansible.builtin.assert:
+    that:
+      - certbot_challenge in ['webroot', 'dns-route53']
+    fail_msg: "certbot_challenge is '{{ certbot_challenge }}'; use webroot or dns-route53."
+    quiet: true
+  tags: [certs]
+
+- name: Install certbot (and its Route 53 plugin for dns-route53)
   become: yes
   apt:
-    name: certbot
+    name: "{{ ['certbot'] + (['python3-certbot-dns-route53'] if certbot_challenge == 'dns-route53' else []) }}"
     state: present
   tags: [certs]
 
@@ -69,11 +77,14 @@
 # First issuance only. apache has to be running the rendered config (port-80
 # challenge alias) before Let's Encrypt fetches the challenge, and the
 # restart handler has not run yet at this point in the play.
+# (webroot only: DNS-01 doesn't need apache to serve anything.)
 - name: Check apache config before restarting for first issuance
   become: yes
   command: apache2ctl configtest
   changed_when: false
-  when: not certbot_cert.stat.exists
+  when:
+    - not certbot_cert.stat.exists
+    - certbot_challenge == 'webroot'
   tags: [certs]
 
 - name: Restart apache so the challenge path is live
@@ -81,15 +92,20 @@
   service:
     name: apache2
     state: restarted
-  when: not certbot_cert.stat.exists
+  when:
+    - not certbot_cert.stat.exists
+    - certbot_challenge == 'webroot'
   tags: [certs]
 
-- name: Obtain the certificate (webroot)
+# dns-route53 uses the machine's instance-profile credentials; no keys on disk.
+- name: Obtain the certificate ({{ certbot_challenge }})
   become: yes
   command:
     argv: "{{ ['certbot', 'certonly', '--non-interactive', '--agree-tos',
-               '--email', certbot_email, '--webroot', '-w', certbot_webroot,
-               '--cert-name', server_name, '-d', server_name]
+               '--email', certbot_email]
+              + (['--webroot', '-w', certbot_webroot] if certbot_challenge == 'webroot'
+                 else ['--dns-route53'])
+              + ['--cert-name', server_name, '-d', server_name]
               + (['-d', alt_server_name] if alt_server_name | default('') != '' else []) }}"
   when: not certbot_cert.stat.exists
   notify:
