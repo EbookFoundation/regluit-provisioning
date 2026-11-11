@@ -85,7 +85,7 @@ Two roles, each with an instance profile of the same name, created by hand on 20
 
 Both trust EC2. The log copy uses the machine's role, so no stored access key is needed.
 
-**Certificate permission (DNS-01, section 7):** a second inline policy, `certbot-dns-route53`, allowing `route53:ListHostedZones` and `route53:GetChange`, plus `route53:ChangeResourceRecordSets` on the `unglue.it` zone **only** to `UPSERT` or `DELETE` the TXT record `_acme-challenge.<the machine's own name>` (IAM conditions on record name, type and action; those are the only calls certbot's Route 53 plugin makes). Test: to be added 2026-11-10. Production: not yet; if its certificate also covers `www.unglue.it`, include `_acme-challenge.www.unglue.it` in the name list.
+**Certificate permission (DNS-01, section 7):** a second inline policy, `certbot-dns-route53`, allowing `route53:ListHostedZones` and `route53:GetChange`, plus `route53:ChangeResourceRecordSets` on the `unglue.it` zone **only** to `UPSERT` or `DELETE` the TXT record `_acme-challenge.<the machine's own name>` (IAM conditions on record name, type and action; those are the only calls certbot's Route 53 plugin makes). Test: added 2026-11-10; its renewal switched to DNS-01 the same day. Production: not yet; if its certificate also covers `www.unglue.it`, include `_acme-challenge.www.unglue.it` in the name list.
 
 **Check:** `scripts/check_log_ship.sh`.
 
