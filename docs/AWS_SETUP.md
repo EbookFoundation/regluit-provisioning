@@ -104,6 +104,17 @@ Both sites use Let's Encrypt certificates renewed by certbot on the machine, but
 
 The app sends as `unglueit@ebookfoundation.org`. Production sends through SES in the **Foundation's** AWS account, not this one; test has used SES in this account (as of April 2026; not re-checked for this file). SMTP settings come from the Ansible vault. See provisioning #94 for the email-authentication records.
 
+## Rebuilding test (scripts/aws_setup.sh create / cutover)
+
+1. **Plan:** `scripts/aws_setup.sh create test`. It prints what it would make (a new machine and Elastic IP tagged `unglueit:candidate=test`, next to the live one), asks AWS with `--dry-run` whether that's allowed, and prints the exact command for step 2. Nothing is created.
+2. **Create:** `scripts/aws_setup.sh create test --ami <the ID the plan showed> --yes`. The live machine, its address and DNS are not touched. The IAM role must already exist and pass `check` (creating roles stays a deliberate human step).
+3. **Build:** `ansible-playbook -i hosts setup-test.yml -e ansible_host=<the candidate's address>`. The certificate comes by DNS-01 (section 7), so this works before DNS moves. Both machines now point at the same test database: stop celery on one of them until the switch.
+4. **Check:** `curl --resolve test.unglue.it:443:<candidate address> https://test.unglue.it/` and click around the same way.
+5. **Switch:** `scripts/aws_setup.sh cutover test` shows the plan; `... --expect-current <the address test.unglue.it points at now> --yes` moves the DNS record in one atomic change (refused if the record changed meanwhile) and prints the command to switch back.
+6. **Afterwards:** stop the old machine, keep it 24 hours, then terminate it, release its address, and remove the candidate tag from the new machine and its address.
+
+Production: `create prod` and `cutover prod` are refused until a test rebuild has worked end to end (#109).
+
 ## Keeping this file true
 
 Run `AWS_PROFILE=<unglue.it profile> scripts/aws_setup.sh check` (read-only; `check prod` or `check test` for one server). It compares AWS with the values above and prints OK, DIFF or NOTE per item. A DIFF means AWS and this file disagree: fix whichever is wrong, and keep the expected values at the top of the script in step with this file. Update the date at the top when you do.
