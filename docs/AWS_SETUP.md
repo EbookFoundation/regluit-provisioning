@@ -104,4 +104,4 @@ The app sends as `unglueit@ebookfoundation.org`. Production sends through SES in
 
 ## Keeping this file true
 
-Re-read the values above with read-only AWS CLI calls (`describe-instances`, `describe-db-instances`, `list-resource-record-sets`, `get-bucket-*`, `get-distribution-config`, `get-role-policy`) whenever something in AWS changes, and update the date at the top.
+Run `AWS_PROFILE=<unglue.it profile> scripts/aws_setup.sh check` (read-only; `check prod` or `check test` for one server). It compares AWS with the values above and prints OK, DIFF or NOTE per item. A DIFF means AWS and this file disagree: fix whichever is wrong, and keep the expected values at the top of the script in step with this file. Update the date at the top when you do.
