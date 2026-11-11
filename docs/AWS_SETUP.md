@@ -1,6 +1,6 @@
 # AWS setup for unglue.it: what the playbooks don't build
 
-The Ansible playbooks in this repo set up **a running Ubuntu machine**: packages, the app, Apache, Celery, certificates, cron jobs, log copying. They don't create anything in AWS. Everything below was made by hand, in the AWS console or the CLI, and has to exist before a playbook can build a new server.
+The Ansible playbooks in this repo set up **a running Ubuntu machine**: packages, the app, Apache, Celery, certificates, cron jobs, log copying. They don't create anything in AWS. Everything below was made by hand, in the AWS console or the CLI. A new server needs at least its machine, address and DNS record, database access and log-copy role before the setup playbook can finish.
 
 This is a checklist: what exists today, how to recreate it, and how to check it. A script that does the same is planned (see the issue linked at the end).
 
@@ -38,7 +38,7 @@ This is a checklist: what exists today, how to recreate it, and how to check it.
 | Backups | 7 days, window 07:27–07:57 UTC | same |
 | Public access | no | no |
 
-**`vpc-rds` allows in:** MySQL (3306) from the `vpc-prod` security group only. (It also lists a security group that no longer exists; harmless, can be removed.)
+**`vpc-rds` allows in:** MySQL (3306) from the `vpc-prod` security group only.
 
 **The app finds the database** through `vault_mysql_db_host` in the environment's Ansible vault. A new database means updating that value and re-running the setup playbook.
 
@@ -89,15 +89,14 @@ Both trust EC2. The log copy uses the machine's role, so no stored access key is
 
 ## 7. Certificates for the sites
 
-`unglue.it` and `test.unglue.it` use Let's Encrypt certificates, issued and renewed by certbot on each machine with the HTTP-01 method through the port-80 virtual host.
+Both sites use Let's Encrypt certificates renewed by certbot on the machine, but they got there differently:
 
-**Gap for a brand-new machine:** HTTP-01 only works once DNS already points at the new machine.
+- **Test:** the playbook manages certbot (`certbot_manage: true`; HTTP-01 through the port-80 virtual host, webroot `/var/lib/letsencrypt`; proven 2026-08-18, #67). A fresh test machine gets its certificate from the setup playbook, **once DNS points at it**.
+- **Production:** certbot was set up **by hand** on the machine (webroot `/var/www/static`, renewal timer active). The playbook only points Apache at `/etc/letsencrypt/live/unglue.it/` (`manage_certs: false`, `certbot_manage` unset) and does nothing else about the certificate. **A new production machine built from the playbooks gets no certificate.**
 
-**Chosen (2026-11-10, to be tried on test first): DNS-01** with certbot's Route 53 plugin. The playbook installs the plugin; each server's role gets permission to change only `_acme-challenge` records in the `unglue.it` zone (part of the script in provisioning #109). The alternatives considered:
+**Plan (decided 2026-11-10, not built yet):** move both servers to certbot's DNS-01 method with its Route 53 plugin, which works before DNS points at a new machine. That means: the playbook installs the plugin and requests certificates with it; each machine's role gets permission to change only `_acme-challenge` records in the `unglue.it` zone (#109); try it on test first; then turn on `certbot_manage` for production.
 
-- Issue with DNS-01 instead (certbot's Route 53 plugin), which works before DNS moves.
-- Copy the current certificate from the old machine, then let certbot take over after the switch.
-- Accept a few minutes without HTTPS during the switch. Not recommended for production.
+**Until that's built, for a new production machine:** copy `/etc/letsencrypt/` from the old machine before switching DNS (never into git: it holds the private key), or switch DNS and run certbot at once, accepting a few minutes without HTTPS.
 
 ## 8. Mail (Amazon SES)
 
