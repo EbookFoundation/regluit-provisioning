@@ -189,21 +189,26 @@ check_role() {   # the machine's role: trusts EC2; log copy + (optionally) its o
     else diff_ "$env role $role: no s3:PutObject on $LOGS_BUCKET/unglue.it/$env/*"; fi
     # Narrow means every Allow statement is one of exactly three shapes:
     #   log    s3:PutObject / s3:AbortMultipartUpload on its own log prefix
-    #   find   route53:ListHostedZones / route53:GetChange on "*" (certbot DNS-01)
+    #   find   exactly route53:ListHostedZones + route53:GetChange on "*" (certbot needs both)
     #   acme   route53:ChangeResourceRecordSets on the unglue.it zone, limited by
-    #          condition to the TXT record _acme-challenge.<its own name>
+    #          condition to UPSERT/DELETE of the TXT record _acme-challenge.<its own name>
+    #          (the only calls certbot-dns-route53 2.9 makes)
     local zone_arn="arn:aws:route53:::hostedzone/$(zone_id | sed 's#^/hostedzone/##')"
     local shapes; shapes=$(jq -c --arg r "arn:aws:s3:::$LOGS_BUCKET/unglue.it/$env/*" --arg z "$zone_arn" --arg n "_acme-challenge.$dns" '
         def acts: [.Action]|flatten; def res: [.Resource]|flatten;
         [ .[] | select(.Effect=="Allow") |
           if has("NotAction") or has("NotResource") then "other"
           elif (acts - ["s3:PutObject","s3:AbortMultipartUpload"] | length)==0 and res==[$r] and (has("Condition")|not) then "log"
-          elif (acts - ["route53:ListHostedZones","route53:GetChange"] | length)==0 and res==["*"] and (has("Condition")|not) then "find"
+          elif (acts|sort)==["route53:GetChange","route53:ListHostedZones"] and res==["*"] and (has("Condition")|not) then "find"
           elif acts==["route53:ChangeResourceRecordSets"] and res==[$z]
-               and .Condition=={"ForAllValues:StringEquals":{"route53:ChangeResourceRecordSetsNormalizedRecordNames":[$n],"route53:ChangeResourceRecordSetsRecordTypes":["TXT"]}} then "acme"
+               and (.Condition|keys)==["ForAllValues:StringEquals"]
+               and (.Condition["ForAllValues:StringEquals"] | (keys|sort)==["route53:ChangeResourceRecordSetsActions","route53:ChangeResourceRecordSetsNormalizedRecordNames","route53:ChangeResourceRecordSetsRecordTypes"]
+                    and .["route53:ChangeResourceRecordSetsNormalizedRecordNames"]==[$n]
+                    and .["route53:ChangeResourceRecordSetsRecordTypes"]==["TXT"]
+                    and (.["route53:ChangeResourceRecordSetsActions"]|sort)==["DELETE","UPSERT"]) then "acme"
           else "other" end ]' <<<"$pol")
     if jq -e 'index("other")' <<<"$shapes" >/dev/null; then
-        diff_ "$env role $role: inline policy allows more than the log copy and its own ACME challenge record"
+        diff_ "$env role $role: inline policy has a statement that is not exactly the log copy or its own ACME-challenge permission"
     else ok "$env role $role: inline policy allows nothing else"; fi
     local want; want=$(expect "$env" cert_dns)
     if jq -e 'index("acme") and index("find")' <<<"$shapes" >/dev/null; then
