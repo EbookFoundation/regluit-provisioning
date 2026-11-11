@@ -4,7 +4,7 @@
 # separately, and against the real script, by
 # tests/certbot_renewal_probe_test.py.
 #
-# The five expressions in the first play are a DELIBERATE COPY of the ones in
+# The expressions in the first play are a DELIBERATE COPY of the ones in
 # certs_precheck.yml: Ansible offers no way to exercise a task file's vars with
 # a stubbed register. Edit them together, or this keeps passing while the role
 # stops working. The copy has already earned itself once -- it is what caught
@@ -137,6 +137,35 @@
         rc: 0
         expect_ok: false
         stdout: "authenticator=['webroot', 'apache']\nwebroot=test.unglue.it /var/lib/letsencrypt\n"
+      # certbot_challenge: dns-route53 (DNS-01). The webroot lines don't matter
+      # there; the authenticator must match the method, in both directions.
+      - name: "dns-route53 host, dns-route53 renewal config"
+        challenge: dns-route53
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: true
+        stdout: "authenticator=dns-route53\nwebroot=test.unglue.it \n"
+      - name: "dns-route53 host still on webroot renewal must fail"
+        challenge: dns-route53
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: "authenticator=webroot\nwebroot=test.unglue.it /var/lib/letsencrypt\n"
+      - name: "webroot host with dns-route53 renewal must fail"
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 0
+        expect_ok: false
+        stdout: "authenticator=dns-route53\nwebroot=test.unglue.it \n"
+      - name: "dns-route53 host, unreadable renewal config must fail"
+        challenge: dns-route53
+        server_name: test.unglue.it
+        alt_server_name: ""
+        rc: 1
+        expect_ok: false
+        stdout: ""
 
   tasks:
     - name: Judge each probe output with the production expressions
@@ -157,10 +186,13 @@
           {{ probe_webroots | dict2items | selectattr('value', 'equalto', certbot_webroot)
              | map(attribute='key') | list }}
         wrong_webroots: "{{ expected_domains | reject('in', domains_pointing_at_us) | list }}"
+        certbot_challenge: "{{ item.challenge | default('webroot') }}"
+        expected_authenticator: >-
+          {{ 'webroot' if certbot_challenge | default('webroot') == 'webroot' else 'dns-route53' }}
         verdict: >-
           {{ (certbot_renewal_probe.rc | default(1) | int == 0)
-             and (probe_authenticator == 'webroot')
-             and (wrong_webroots | length == 0) }}
+             and (probe_authenticator == expected_authenticator)
+             and (expected_authenticator != 'webroot' or wrong_webroots | length == 0) }}
       ansible.builtin.assert:
         that:
           - (verdict | bool) == (item.expect_ok | bool)

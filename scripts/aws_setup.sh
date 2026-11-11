@@ -38,12 +38,14 @@ expect() {   # expect <env> <key>
         prod:rds)       echo production-2024 ;;
         prod:rds_class) echo db.m5.large ;;
         prod:multi_az)  echo true ;;
+        prod:cert_dns)  echo later ;;   # DNS-01 permission: not added to prod yet
         test:dns)       echo test.unglue.it ;;
         test:type)      echo t3.large ;;
         test:profile)   echo unglueit-log-shipper-test ;;
         test:rds)       echo test-2026-08-23 ;;
         test:rds_class) echo db.t3.medium ;;
         test:multi_az)  echo false ;;
+        test:cert_dns)  echo yes ;;     # certbot_challenge: dns-route53 (docs section 7)
         *) echo "BUG: no expected value for $1:$2" >&2; exit 2 ;;
     esac
 }
@@ -142,7 +144,7 @@ check_env() {
 
     prof=$(jq -r '.IamInstanceProfile.Arn // "" | split("/") | last' <<<"$j")
     same "$env instance profile" "$(expect "$env" profile)" "$prof"
-    check_role "$env" "$(expect "$env" profile)"
+    check_role "$env" "$(expect "$env" profile)" "$dns"
 
     rds=$(expect "$env" rds)
     local d; d=$(AWS_TRY rds describe-db-instances --db-instance-identifier "$rds" --query 'DBInstances[0]' --output json)
@@ -164,8 +166,8 @@ check_env() {
     else diff_ "$env database security group: $DB_SG not attached"; fi
 }
 
-check_role() {   # the log-copy role: trusts EC2, may only write its own log prefix
-    local env=$1 role=$2 trust pol
+check_role() {   # the machine's role: trusts EC2; log copy + (optionally) its own ACME record
+    local env=$1 role=$2 dns=$3 trust pol
     trust=$(AWS_TRY iam get-role --role-name "$role" --query 'Role.AssumeRolePolicyDocument.Statement' --output json)
     [ -n "$trust" ] || { diff_ "$env role $role: not found"; return; }
     # Exactly one statement: EC2, and only EC2, may assume the role.
@@ -185,14 +187,32 @@ check_role() {   # the log-copy role: trusts EC2, may only write its own log pre
          'any(.[]; .Effect=="Allow" and ([.Action]|flatten|index("s3:PutObject")) and ([.Resource]|flatten|index($r)))' <<<"$pol" >/dev/null; then
         ok "$env role $role: may write s3://$LOGS_BUCKET/unglue.it/$env/"
     else diff_ "$env role $role: no s3:PutObject on $LOGS_BUCKET/unglue.it/$env/*"; fi
-    # Narrow means: every Allow is only these two actions, only on its own prefix.
-    if jq -e --arg r "arn:aws:s3:::$LOGS_BUCKET/unglue.it/$env/*" \
-         'any(.[]; .Effect=="Allow" and (
-              ([.Action]|flatten - ["s3:PutObject","s3:AbortMultipartUpload"] | length > 0)
-              or ([.Resource]|flatten - [$r] | length > 0)
-              or has("NotAction") or has("NotResource")))' <<<"$pol" >/dev/null; then
-        diff_ "$env role $role: inline policy allows more than PutObject/AbortMultipartUpload on its own log prefix"
+    # Narrow means every Allow statement is one of exactly three shapes:
+    #   log    s3:PutObject / s3:AbortMultipartUpload on its own log prefix
+    #   find   route53:ListHostedZones / route53:GetChange on "*" (certbot DNS-01)
+    #   acme   route53:ChangeResourceRecordSets on the unglue.it zone, limited by
+    #          condition to the TXT record _acme-challenge.<its own name>
+    local zone_arn="arn:aws:route53:::hostedzone/$(zone_id | sed 's#^/hostedzone/##')"
+    local shapes; shapes=$(jq -c --arg r "arn:aws:s3:::$LOGS_BUCKET/unglue.it/$env/*" --arg z "$zone_arn" --arg n "_acme-challenge.$dns" '
+        def acts: [.Action]|flatten; def res: [.Resource]|flatten;
+        [ .[] | select(.Effect=="Allow") |
+          if has("NotAction") or has("NotResource") then "other"
+          elif (acts - ["s3:PutObject","s3:AbortMultipartUpload"] | length)==0 and res==[$r] and (has("Condition")|not) then "log"
+          elif (acts - ["route53:ListHostedZones","route53:GetChange"] | length)==0 and res==["*"] and (has("Condition")|not) then "find"
+          elif acts==["route53:ChangeResourceRecordSets"] and res==[$z]
+               and .Condition=={"ForAllValues:StringEquals":{"route53:ChangeResourceRecordSetsNormalizedRecordNames":[$n],"route53:ChangeResourceRecordSetsRecordTypes":["TXT"]}} then "acme"
+          else "other" end ]' <<<"$pol")
+    if jq -e 'index("other")' <<<"$shapes" >/dev/null; then
+        diff_ "$env role $role: inline policy allows more than the log copy and its own ACME challenge record"
     else ok "$env role $role: inline policy allows nothing else"; fi
+    local want; want=$(expect "$env" cert_dns)
+    if jq -e 'index("acme") and index("find")' <<<"$shapes" >/dev/null; then
+        ok "$env role $role: may set only the TXT record _acme-challenge.$dns (certbot DNS-01)"
+    elif [ "$want" = yes ]; then
+        diff_ "$env role $role: missing the certbot DNS-01 permission for _acme-challenge.$dns"
+    else
+        note "$env role $role: no certbot DNS-01 permission yet (planned; docs/AWS_SETUP.md section 7)"
+    fi
 }
 
 # --- shared pieces --------------------------------------------------------------

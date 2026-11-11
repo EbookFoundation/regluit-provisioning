@@ -78,12 +78,14 @@ Records the servers depend on:
 
 ## 6. Permissions for the nightly log copy (IAM)
 
-Two roles, each with an instance profile of the same name, created by hand on 2026-11-03/04 for provisioning #108:
+Two roles, each with an instance profile of the same name, created by hand on 2026-11-03/04 for provisioning #108. Despite the names, each is the machine's only role, so it also carries the certificate permission below:
 
 - `unglueit-log-shipper-prod`: may only `s3:PutObject` and `s3:AbortMultipartUpload` under `unglueit-logs/unglue.it/prod/`.
 - `unglueit-log-shipper-test`: the same, under `unglueit-logs/unglue.it/test/`.
 
 Both trust EC2. The log copy uses the machine's role, so no stored access key is needed.
+
+**Certificate permission (DNS-01, section 7):** a second inline policy, `certbot-dns-route53`, allowing `route53:ListHostedZones` and `route53:GetChange`, plus `route53:ChangeResourceRecordSets` on the `unglue.it` zone **only** for the TXT record `_acme-challenge.<the machine's own name>` (an IAM condition on the record name and type). Test: to be added 2026-11-10. Production: not yet.
 
 **Check:** `scripts/check_log_ship.sh`.
 
@@ -94,7 +96,7 @@ Both sites use Let's Encrypt certificates renewed by certbot on the machine, but
 - **Test:** the playbook manages certbot (`certbot_manage: true`; HTTP-01 through the port-80 virtual host, webroot `/var/lib/letsencrypt`; proven 2026-08-18, #67). A fresh test machine gets its certificate from the setup playbook, **once DNS points at it**.
 - **Production:** certbot was set up **by hand** on the machine (webroot `/var/www/static`, renewal timer active). The playbook only points Apache at `/etc/letsencrypt/live/unglue.it/` (`manage_certs: false`, `certbot_manage` unset) and does nothing else about the certificate. **A new production machine built from the playbooks gets no certificate.**
 
-**Plan (decided 2026-11-10, not built yet):** move both servers to certbot's DNS-01 method with its Route 53 plugin, which works before DNS points at a new machine. That means: the playbook installs the plugin and requests certificates with it; each machine's role gets permission to change only `_acme-challenge` records in the `unglue.it` zone (#109); try it on test first; then turn on `certbot_manage` for production.
+**DNS-01 (decided 2026-11-10):** the playbook now supports `certbot_challenge: dns-route53` (installs certbot's Route 53 plugin and requests the certificate through DNS, which works before DNS points at a new machine). Test is switched to it; production comes after test has renewed this way. To switch an existing machine: add the role permission (section 6), then on the box `sudo certbot reconfigure --cert-name <name> --dns-route53` (the playbook's precheck stops and prints this command if the stored renewal settings don't match).
 
 **Until that's built, for a new production machine:** copy `/etc/letsencrypt/` from the old machine before switching DNS (never into git: it holds the private key), or switch DNS and run certbot at once, accepting a few minutes without HTTPS.
 

@@ -72,13 +72,17 @@
     - certbot_manage | default(false) | bool
     - certbot_precheck_cert.stat.exists | default(false)
 
-# The five expressions below are duplicated, on purpose, in
+# The expressions below are duplicated, on purpose, in
 # tests/certs_precheck_verdict_cases.yml -- Ansible offers no way to exercise a
 # task file's vars with a stubbed register. Edit them together or the test goes
 # on passing while this stops working. That test is what caught the CR bug
 # described above, so it is worth the duplication.
-- name: The stored renewal settings must match the webroot the vhost serves
+- name: The stored renewal settings must match the challenge method
   vars:
+    # certbot_challenge (defaults/main.yml): webroot or dns-route53. The webroot
+    # paths only matter for webroot; DNS-01 never touches the vhost.
+    expected_authenticator: >-
+      {{ 'webroot' if certbot_challenge | default('webroot') == 'webroot' else 'dns-route53' }}
     # Ansible's script action runs over a pseudo-terminal, so stdout comes back
     # with CRLF line endings. Without stripping the CR it lands inside the
     # captures below and every equality check fails on a CORRECT config.
@@ -106,28 +110,29 @@
   ansible.builtin.assert:
     that:
       - certbot_renewal_probe.rc | default(1) | int == 0
-      - probe_authenticator == 'webroot'
-      - wrong_webroots | length == 0
+      - probe_authenticator == expected_authenticator
+      - expected_authenticator != 'webroot' or wrong_webroots | length == 0
     fail_msg: >-
       {{ server_name }} already has a certificate, but its renewal config
-      (/etc/letsencrypt/renewal/{{ server_name }}.conf) could not be read, does
-      not use the webroot authenticator (it says
-      '{{ probe_authenticator | default('?', true) }}'), or does not resolve
-      {{ wrong_webroots | join(', ') | default('every name', true) }}
+      (/etc/letsencrypt/renewal/{{ server_name }}.conf) could not be read, or uses
+      the '{{ probe_authenticator | default('?', true) }}' authenticator where
+      certbot_challenge expects '{{ expected_authenticator }}'{% if expected_authenticator == 'webroot' %},
+      or does not resolve {{ wrong_webroots | join(', ') | default('every name', true) }}
       to {{ certbot_webroot }} -- the only path the port-80 vhost serves ACME
       challenges from. Effective webroots, as certbot's own parser reads them:
-      {{ probe_webroots }}.
+      {{ probe_webroots }}{% endif %}.
       {{ certbot_renewal_probe.stderr | default('') | trim }}
       Unattended renewal would fail silently, so this stops before apache's
       config is rewritten. Reconcile it on the host with certbot's own command
       for exactly this (certbot >= 2.3; Ubuntu 24.04 ships 2.9) --
       `certonly --keep-until-expiring` will NOT do it, because it returns
       without saving renewal settings when the certificate is not yet due:
-      certbot reconfigure --cert-name {{ server_name }}
-      --preferred-challenges http --webroot -w {{ certbot_webroot }}
+      {% if expected_authenticator == 'webroot' %}certbot reconfigure --cert-name {{ server_name }}
+      --preferred-challenges http --webroot -w {{ certbot_webroot }}{% else %}sudo apt-get install -y python3-certbot-dns-route53 &&
+      sudo certbot reconfigure --cert-name {{ server_name }} --dns-route53{% endif %}
     success_msg: >-
-      Stored renewal settings resolve {{ expected_domains | join(', ') }}
-      to {{ certbot_webroot }}.
+      Stored renewal settings use {{ expected_authenticator }}{% if expected_authenticator == 'webroot' %}
+      and resolve {{ expected_domains | join(', ') }} to {{ certbot_webroot }}{% endif %}.
   when:
     - certbot_manage | default(false) | bool
     - certbot_precheck_cert.stat.exists | default(false)
@@ -176,7 +181,8 @@
       Because the lineage already exists, the issuance task will be skipped, so
       the uncovered name would be served a certificate that does not include it
       and renewal would never add it. Expand the certificate on the host first:
-      certbot certonly --non-interactive --webroot -w {{ certbot_webroot }}
+      certbot certonly --non-interactive
+      {{ ('--webroot -w ' ~ certbot_webroot) if certbot_challenge | default('webroot') == 'webroot' else '--dns-route53' }}
       --cert-name {{ server_name }} --expand
       {{ expected_domains | map('regex_replace', '^', '-d ') | join(' ') }}
     success_msg: >-
