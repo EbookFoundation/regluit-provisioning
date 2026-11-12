@@ -185,6 +185,28 @@ RewriteCond %{HTTP_USER_AGENT} "Chrome/1([0-2][0-9]|3[0-3])\." [NC]
 RewriteRule ^ - [F]
 # ---------------------------------------------------------------------------
 
+# --- Language-filter crawl block (2026-11-12, security-private #43) ---------
+# A residential-proxy botnet (23,230 addresses in 30,000 requests) pegged all
+# 4 cores, claiming current desktop browsers, so neither address nor browser
+# string can single it out. Most of its listing-page hits were the language
+# filter, e.g. /pid/all/42078?pub_lang=nl, two thirds with no referer. A
+# reader picks a language from an unglue.it page, so a filtered /bypub/ or
+# /pid/ request whose referer isn't one of ours is refused. Unfiltered
+# listings stay open to all; the named crawlers Eric chose to allow (July)
+# are exempt.
+# An EMERGENCY STOPGAP, lossy by design: a reader opening a bookmarked or
+# shared filtered link from outside the site is refused too, and a bot can
+# get past it by faking the referer or a crawler name. Remove it once the
+# listing pages are cached for anonymous visitors or bot protection sits in
+# front of the site (#43, steps 2 and 3).
+# Revert = delete this stanza and rerun --tags apache-config.
+RewriteCond %{REQUEST_URI} ^/(bypub|pid)/ [NC]
+RewriteCond %{QUERY_STRING} (^|&)pub_lang= [NC]
+RewriteCond %{HTTP_REFERER} !^https?://({{ [server_name, alt_server_name] | select | map('regex_escape') | join('|') }})/ [NC]
+RewriteCond %{HTTP_USER_AGENT} !(GPTBot|ClaudeBot|Googlebot|bingbot|DotBot|meta-webindexer) [NC]
+RewriteRule ^ - [F]
+# ---------------------------------------------------------------------------
+
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
 # intermediate mode
 # 2015.03.04   (with Apache v 2.2.22 and OpenSSL 1.0.1 and HSTS enabled)
