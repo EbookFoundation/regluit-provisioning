@@ -4,7 +4,7 @@ The Ansible playbooks in this repo set up **a running Ubuntu machine**: packages
 
 This is a checklist: what exists today, how to recreate it, and how to check it. A script that does the same is planned (see the issue linked at the end).
 
-**Read as of 2026-11-10** (section 5's bucket access, 2026-11-11) from the AWS account that hosts unglue.it (the Gluejar member account of the Free Ebook Foundation's AWS organization), region `us-east-1`. Account numbers, passwords and keys are deliberately not in this file; they are in 1Password and the Ansible vault.
+**Read as of 2026-11-10** (section 5's bucket access, 2026-11-12) from the AWS account that hosts unglue.it (the Gluejar member account of the Free Ebook Foundation's AWS organization), region `us-east-1`. Account numbers, passwords and keys are deliberately not in this file; they are in 1Password and the Ansible vault.
 
 ## 1. Machines (EC2)
 
@@ -75,11 +75,13 @@ Records the servers depend on:
 - One distribution: alias `files.unglue.it`, origin the `tieulgnu` bucket, HTTP redirected to HTTPS, all price classes.
 - Certificate: an Amazon (ACM) certificate for `files.unglue.it` in us-east-1. Amazon renews it as long as its validation CNAME (section 3) stays in DNS.
 - The app uses it through `AWS_S3_CUSTOM_DOMAIN` (set by the playbooks).
-- **Who can read the bucket.** Until the lock below is done, a bucket policy lets anyone read any file (`Principal: "*"`, `s3:GetObject`), and CloudFront reads it that way too. The site itself links only to files.unglue.it. `scripts/aws_setup.sh check all` reports the bucket's state as a NOTE until the lock is done, then expects it.
+- **Who can read the bucket.** Since 2026-11-12, only CloudFront can read it anonymously. CloudFront signs its requests (an Origin Access Control), and the bucket policy's `CloudFrontOnly` statement lets this distribution, and only it, read files; on 2026-11-12 that was the policy's only statement. The public-access block ignores public ACLs and public policies, and a direct request to the bucket gets `403`. The site itself links only to files.unglue.it. `scripts/aws_setup.sh check all` expects this state (`FILES_LOCK=locked`) and reports drift as a DIFF: a missing or altered CloudFront statement, S3 judging the policy public, signing off, or the public-access block loosened. It doesn't flag an added statement that S3 doesn't consider public, so review the policy by hand if it ever grows. Before the lock, a public-read policy (`Principal: "*"`) let anyone read any file directly.
 
 ### Locking the bucket so only CloudFront can read it anonymously
 
-Two steps, each checked before the next, each reversible. Run them from a laptop with the account's AWS profile, in a scratch folder, because the files saved there are the rollback. The app's own reads and uploads use its IAM credentials and aren't affected.
+**Done 2026-11-12** (step 1 at about 13:27 PT, step 2 at about 13:32 PT). Kept here as the record of what changed, and as the procedure for a rebuilt bucket.
+
+Two steps, each checked before the next, each reversible. Run them from a laptop with the account's AWS profile, in a scratch folder, because the files saved there are the rollback. Set `REPO` to your regluit-provisioning checkout first (`REPO=~/…/regluit-provisioning`), since the scratch folder isn't inside it. The app's own reads and uploads use its IAM credentials and aren't affected.
 
 **Before:** record today's state; stop if any value comes back empty. Type `bash` first and run all the blocks in that one shell: `set -e` then ends just that shell at the first failure, not your terminal, and the variables carry from block to block.
 
@@ -98,7 +100,11 @@ jq -e '(.Statement | length) == 1 and .Statement[0].Effect == "Allow" and .State
   and (.Statement[0] | has("Condition") | not)' tieulgnu-policy-before.json
 OBJ=$(aws s3api list-objects-v2 --bucket tieulgnu --prefix ebf/ --max-keys 1 --query 'Contents[0].Key' --output text)
 [ -n "$OBJ" ] && [ "$OBJ" != None ] || { echo "no test file found"; exit 1; }   # a real file to test with
-scripts/aws_setup.sh check all      # NOTE: "files bucket tieulgnu: anyone can read it directly"
+# check exits 1 on any DIFF anywhere (e.g. a stopped test machine), which set -e would treat
+# as fatal; accept that one status, but stop on a refusal, a failed AWS read, or no bucket line
+CHECK=$("$REPO/scripts/aws_setup.sh" check all) || [ $? -eq 1 ]
+if grep -q "AWS read failed" <<<"$CHECK"; then echo "$CHECK"; exit 1; fi   # (set -e ignores a leading "!")
+grep "files bucket" <<<"$CHECK"      # NOTE: "files bucket tieulgnu: anyone can read it directly"
 ```
 
 **Step 1: give CloudFront its own signed access. Nothing changes for anyone yet.**
@@ -155,7 +161,7 @@ aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/$OBJ" --q
 
 Why those four settings: `IgnorePublicAcls` shuts off files that carry their own public-read grant (`translate_doab_ids` uploads with `ACL='public-read'`). `BlockPublicPolicy` stops a public policy coming back by accident, and `RestrictPublicBuckets` blocks anonymous access even if one did. `BlockPublicAcls` stays off so an upload that asks for public-read still succeeds instead of failing; the grant is simply ignored.
 
-Check, once the invalidation has completed: `curl -sI "https://files.unglue.it/$OBJ"` gives `200`, `curl -sI "https://tieulgnu.s3.amazonaws.com/$OBJ"` gives `403`, an ebook download from a work page works, and `check all` says "not anonymously readable except through CloudFront". Then set `FILES_LOCK=locked` in `scripts/aws_setup.sh` (one line, via a PR), so `check` reports any drift back as a DIFF.
+Check, once the invalidation has completed: `curl -sI "https://files.unglue.it/$OBJ"` gives `200`, `curl -sI "https://tieulgnu.s3.amazonaws.com/$OBJ"` gives `403`, an ebook download from a work page works, and `check all` says "not anonymously readable except through CloudFront". Then set `FILES_LOCK=locked` in `scripts/aws_setup.sh` (one line, via a PR; done 2026-11-12), so `check` reports any drift back as a DIFF.
 
 **Rollback** (either step). It restores what "Before" saved, so first make sure nobody has since made a change you'd be undoing:
 
