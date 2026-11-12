@@ -4,7 +4,7 @@ The Ansible playbooks in this repo set up **a running Ubuntu machine**: packages
 
 This is a checklist: what exists today, how to recreate it, and how to check it. A script that does the same is planned (see the issue linked at the end).
 
-**Read as of 2026-11-10** from the AWS account that hosts unglue.it (the Gluejar member account of the Free Ebook Foundation's AWS organization), region `us-east-1`. Account numbers, passwords and keys are deliberately not in this file; they are in 1Password and the Ansible vault.
+**Read as of 2026-11-10** (section 5's bucket access, 2026-11-11) from the AWS account that hosts unglue.it (the Gluejar member account of the Free Ebook Foundation's AWS organization), region `us-east-1`. Account numbers, passwords and keys are deliberately not in this file; they are in 1Password and the Ansible vault.
 
 ## 1. Machines (EC2)
 
@@ -75,6 +75,99 @@ Records the servers depend on:
 - One distribution: alias `files.unglue.it`, origin the `tieulgnu` bucket, HTTP redirected to HTTPS, all price classes.
 - Certificate: an Amazon (ACM) certificate for `files.unglue.it` in us-east-1. Amazon renews it as long as its validation CNAME (section 3) stays in DNS.
 - The app uses it through `AWS_S3_CUSTOM_DOMAIN` (set by the playbooks).
+- **Who can read the bucket.** Until the lock below is done, a bucket policy lets anyone read any file (`Principal: "*"`, `s3:GetObject`), and CloudFront reads it that way too. The site itself links only to files.unglue.it. `scripts/aws_setup.sh check all` reports the bucket's state as a NOTE until the lock is done, then expects it.
+
+### Locking the bucket so only CloudFront can read it anonymously
+
+Two steps, each checked before the next, each reversible. Run them from a laptop with the account's AWS profile, in a scratch folder, because the files saved there are the rollback. The app's own reads and uploads use its IAM credentials and aren't affected.
+
+**Before:** record today's state; stop if any value comes back empty. Type `bash` first and run all the blocks in that one shell: `set -e` then ends just that shell at the first failure, not your terminal, and the variables carry from block to block.
+
+```bash
+set -euo pipefail
+ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+DIST=$(aws cloudfront list-distributions --query "DistributionList.Items[?Aliases.Items && contains(Aliases.Items, 'files.unglue.it')].Id | [0]" --output text)
+: "${ACCOUNT:?}" "${DIST:?}"; [ "$DIST" != None ] || { echo "no distribution"; exit 1; }
+aws s3api get-bucket-policy --bucket tieulgnu --query Policy --output text > tieulgnu-policy-before.json
+aws s3api get-public-access-block --bucket tieulgnu > tieulgnu-pab-before.json
+aws s3api get-bucket-ownership-controls --bucket tieulgnu > tieulgnu-ownership-before.json
+# The steps below assume the policy is exactly today's single public-read statement.
+# If it holds anything else, stop and work out by hand what the other statements need.
+jq -e '(.Statement | length) == 1 and .Statement[0].Effect == "Allow" and .Statement[0].Principal == "*"
+  and .Statement[0].Action == "s3:GetObject" and .Statement[0].Resource == "arn:aws:s3:::tieulgnu/*"
+  and (.Statement[0] | has("Condition") | not)' tieulgnu-policy-before.json
+OBJ=$(aws s3api list-objects-v2 --bucket tieulgnu --prefix ebf/ --max-keys 1 --query 'Contents[0].Key' --output text)
+[ -n "$OBJ" ] && [ "$OBJ" != None ] || { echo "no test file found"; exit 1; }   # a real file to test with
+scripts/aws_setup.sh check all      # NOTE: "files bucket tieulgnu: anyone can read it directly"
+```
+
+**Step 1: give CloudFront its own signed access. Nothing changes for anyone yet.**
+
+```bash
+# Signed access needs object ownership "bucket owner preferred". Per-file ACLs stay
+# enabled, so uploads that ask for public-read keep working ("enforced" would reject them).
+aws s3api put-bucket-ownership-controls --bucket tieulgnu \
+  --ownership-controls 'Rules=[{ObjectOwnership=BucketOwnerPreferred}]'
+
+# a bucket statement that lets this distribution, and only it, read files
+jq --arg arn "arn:aws:cloudfront::$ACCOUNT:distribution/$DIST" '.Statement += [{
+    "Sid": "CloudFrontOnly", "Effect": "Allow",
+    "Principal": {"Service": "cloudfront.amazonaws.com"},
+    "Action": "s3:GetObject", "Resource": "arn:aws:s3:::tieulgnu/*",
+    "Condition": {"StringEquals": {"AWS:SourceArn": $arn}}}]' \
+  tieulgnu-policy-before.json > tieulgnu-policy-step1.json
+aws s3api put-bucket-policy --bucket tieulgnu --policy file://tieulgnu-policy-step1.json
+
+# an Origin Access Control: CloudFront signs every request to the bucket
+OAC=$(aws cloudfront create-origin-access-control --origin-access-control-config \
+  Name=tieulgnu-oac,SigningProtocol=sigv4,SigningBehavior=always,OriginAccessControlOriginType=s3 \
+  --query OriginAccessControl.Id --output text)
+: "${OAC:?}"
+
+# attach it to the distribution's one origin (the ETag makes this fail if the config changed meanwhile)
+aws cloudfront get-distribution-config --id "$DIST" > dist-before.json
+jq --arg oac "$OAC" '.DistributionConfig | .Origins.Items[0].OriginAccessControlId = $oac
+  | .Origins.Items[0].S3OriginConfig.OriginAccessIdentity = ""' dist-before.json > dist-step1.json
+aws cloudfront update-distribution --id "$DIST" --if-match "$(jq -r .ETag dist-before.json)" \
+  --distribution-config file://dist-step1.json > /dev/null
+aws cloudfront wait distribution-deployed --id "$DIST"
+```
+
+Check: an ebook download from a work page on unglue.it works, `curl -sI "https://files.unglue.it/$OBJ"` gives `200`, and `check all` says step 1 is done.
+
+**Step 2: remove public read.**
+
+```bash
+# stop if anyone changed the policy since step 1 (diff prints the difference and set -e stops)
+diff <(aws s3api get-bucket-policy --bucket tieulgnu --query Policy --output text | jq -S .) \
+     <(jq -S . tieulgnu-policy-step1.json)
+# remove exactly the public-read statement saved in "Before", nothing else
+jq --argjson pub "$(jq -c '.Statement[0]' tieulgnu-policy-before.json)" \
+  '.Statement |= map(select(. != $pub))' tieulgnu-policy-step1.json > tieulgnu-policy-step2.json
+jq -e '.Statement | length == 1 and .[0].Sid == "CloudFrontOnly"' tieulgnu-policy-step2.json
+aws s3api put-bucket-policy --bucket tieulgnu --policy file://tieulgnu-policy-step2.json
+aws s3api put-public-access-block --bucket tieulgnu --public-access-block-configuration \
+  BlockPublicAcls=false,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+# make CloudFront fetch the test file fresh, so a cached copy can't hide a failure
+aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/$OBJ" --query Invalidation.Id --output text
+```
+
+Why those four settings: `IgnorePublicAcls` shuts off files that carry their own public-read grant (`translate_doab_ids` uploads with `ACL='public-read'`). `BlockPublicPolicy` stops a public policy coming back by accident, and `RestrictPublicBuckets` blocks anonymous access even if one did. `BlockPublicAcls` stays off so an upload that asks for public-read still succeeds instead of failing; the grant is simply ignored.
+
+Check, once the invalidation has completed: `curl -sI "https://files.unglue.it/$OBJ"` gives `200`, `curl -sI "https://tieulgnu.s3.amazonaws.com/$OBJ"` gives `403`, an ebook download from a work page works, and `check all` says "not anonymously readable except through CloudFront". Then set `FILES_LOCK=locked` in `scripts/aws_setup.sh` (one line, via a PR), so `check` reports any drift back as a DIFF.
+
+**Rollback** (either step). It restores what "Before" saved, so first make sure nobody has since made a change you'd be undoing:
+
+```bash
+aws s3api put-public-access-block --bucket tieulgnu --public-access-block-configuration \
+  "$(jq -c .PublicAccessBlockConfiguration tieulgnu-pab-before.json)"
+aws s3api put-bucket-policy --bucket tieulgnu --policy file://tieulgnu-policy-before.json
+aws s3api put-bucket-ownership-controls --bucket tieulgnu \
+  --ownership-controls "$(jq -c .OwnershipControls tieulgnu-ownership-before.json)"
+```
+
+The Origin Access Control can stay attached; it works with either policy.
 
 ## 6. Permissions for the nightly log copy (IAM)
 

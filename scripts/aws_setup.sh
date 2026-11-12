@@ -68,6 +68,10 @@ MIN_BACKUP_DAYS=7
 FILES_BUCKET=tieulgnu
 LOGS_BUCKET=unglueit-logs
 FILES_HOST=files.unglue.it
+# planned: the bucket is still publicly readable; report its lock progress as NOTEs.
+# locked: only CloudFront may read it; anything else is a DIFF. Set after step 2 of
+# "Locking the bucket" in docs/AWS_SETUP.md section 5.
+FILES_LOCK=planned
 
 # --- plumbing ----------------------------------------------------------------
 # AWS: a failed call is a failure of the check (access denied, throttling, network),
@@ -98,6 +102,7 @@ guard() {
     if [ "$(printf %s "$acct" | sha256)" != "$EXPECTED_ACCOUNT_SHA256" ]; then
         echo "REFUSED: profile $PROFILE is not the unglue.it AWS account" >&2; exit 2
     fi
+    ACCOUNT_ID=$acct   # used only at run time (e.g. the CloudFront ARN); never printed
     echo "account: the unglue.it account (profile $PROFILE), region $REGION"
 }
 
@@ -259,6 +264,84 @@ check_shared() {
         same "CloudFront $FILES_HOST: viewer protocol" redirect-to-https "$(jq -r .DefaultCacheBehavior.ViewerProtocolPolicy <<<"$cf")"
         local alias; alias=$(record "$FILES_HOST" A | jq -r '.AliasTarget.DNSName // empty')
         same "DNS $FILES_HOST -> CloudFront" "$dom." "$alias"
+        check_files_lock "$cf"
+    fi
+}
+
+# Who can read the files bucket (docs/AWS_SETUP.md section 5, "Locking the bucket").
+# Locked means: CloudFront signs every request to the bucket (an Origin Access Control,
+# sigv4, always); the bucket policy lets exactly this distribution read; S3 itself says
+# the policy is not public; the public-access block ignores per-file public grants and
+# refuses public policies, but still accepts uploads that ask for public-read (one app
+# command does); and object ownership is BucketOwnerPreferred, which signed access
+# needs while per-file ACLs stay enabled. The app's own reads use IAM and still work.
+# AWS_ABSENT <error code> <value if absent> <aws args...>: like AWS, but when the call
+# fails only because the thing doesn't exist (that exact error code), print the given
+# value instead. Any other failure (access denied, throttling) fails the check.
+AWS_ABSENT() {
+    local code=$1 absent=$2 err out; shift 2
+    err=$(mktemp "${TMPDIR:-/tmp}/aws_setup_err.XXXXXX")
+    if out=$(aws --profile "$PROFILE" --region "$REGION" "$@" 2>"$err"); then rm -f "$err"; printf '%s\n' "$out"; return 0; fi
+    # the AWS CLI reports "An error occurred (<Code>) when calling the <Op> operation: ..."
+    if grep -qF "An error occurred ($code) when calling" "$err"; then rm -f "$err"; printf '%s\n' "$absent"; return 0; fi
+    cat "$err" >&2; rm -f "$err"
+    echo "ERROR: aws $1 $2 failed" >&2; echo "aws $1 $2" >> "$FAILFLAG"; return 1
+}
+
+check_files_lock() {
+    local cf=$1 oac_id oac_cfg oac_good arn pol status pab acct_bpa own cf_ok has_deny is_public open pab_ok
+    oac_id=$(jq -r '.DefaultCacheBehavior.TargetOriginId as $t | .Origins.Items[] | select(.Id==$t) | .OriginAccessControlId // ""' <<<"$cf")
+    oac_good=false
+    if [ -n "$oac_id" ]; then
+        oac_cfg=$(AWS cloudfront get-origin-access-control --id "$oac_id" --query OriginAccessControl.OriginAccessControlConfig --output json)
+        oac_good=$(jq '.SigningBehavior=="always" and .SigningProtocol=="sigv4" and .OriginAccessControlOriginType=="s3"' <<<"$oac_cfg")
+    fi
+    arn="arn:aws:cloudfront::$ACCOUNT_ID:distribution/$(jq -r .Id <<<"$cf")"
+    # Anything that can't be read (other than "doesn't exist") makes the whole check
+    # fail through FAILFLAG, so a failed lookup can never turn into an OK here.
+    pol=$(AWS_ABSENT NoSuchBucketPolicy '{"Statement":[]}' s3api get-bucket-policy --bucket "$FILES_BUCKET" --query Policy --output text) || return 0
+    # S3's own verdict on whether the policy is public (no policy: not public)
+    status=$(AWS_ABSENT NoSuchBucketPolicy False s3api get-bucket-policy-status --bucket "$FILES_BUCKET" --query PolicyStatus.IsPublic --output text) || return 0
+    pab=$(AWS_ABSENT NoSuchPublicAccessBlockConfiguration '{}' s3api get-public-access-block --bucket "$FILES_BUCKET" --query PublicAccessBlockConfiguration --output json) || return 0
+    # S3 applies the strictest of the bucket and account settings
+    acct_bpa=$(AWS_ABSENT NoSuchPublicAccessBlockConfiguration False s3control get-public-access-block --account-id "$ACCOUNT_ID" --query PublicAccessBlockConfiguration.BlockPublicAcls --output text) || return 0
+    own=$(AWS_ABSENT OwnershipControlsNotFoundError ObjectWriter s3api get-bucket-ownership-controls --bucket "$FILES_BUCKET" --query 'OwnershipControls.Rules[0].ObjectOwnership' --output text) || return 0
+    # exactly the runbook's statement: no extra actions or conditions that could narrow it
+    cf_ok=$(jq --arg b "arn:aws:s3:::$FILES_BUCKET/*" --arg a "$arn" '
+        [.Statement[] | select(.Effect=="Allow"
+            and .Principal == {"Service":"cloudfront.amazonaws.com"}
+            and ([.Action] | flatten) == ["s3:GetObject"]
+            and ([.Resource] | flatten) == [$b]
+            and .Condition == {"StringEquals":{"AWS:SourceArn":$a}})] | length > 0' <<<"$pol")
+    # a Deny could block CloudFront despite the Allow; this check can't judge one, so it never says OK past it
+    has_deny=$(jq '[.Statement[] | select(.Effect=="Deny")] | length > 0' <<<"$pol")
+    is_public=false; [ "$status" = True ] && is_public=true
+    # anonymous reads get through only if the policy is public and S3 isn't told to restrict it
+    open=false; if [ "$is_public" = true ] && [ "$(jq '.RestrictPublicBuckets==true' <<<"$pab")" != true ]; then open=true; fi
+    pab_ok=$(jq '.IgnorePublicAcls==true and .BlockPublicPolicy==true and .RestrictPublicBuckets==true and .BlockPublicAcls!=true' <<<"$pab")
+
+    if [ -n "$oac_id" ] && [ "$oac_good" != true ]; then
+        diff_ "files bucket: CloudFront's Origin Access Control $oac_id doesn't always sign (expected sigv4, always, type s3)"
+    elif [ "$(jq '.BlockPublicAcls==true' <<<"$pab")" = true ] || [ "$acct_bpa" = True ]; then
+        diff_ "files bucket $FILES_BUCKET: BlockPublicAcls is on (bucket or account), so uploads that ask for public-read fail (translate_doab_ids does); keep it off until the app stops asking"
+    elif [ -n "$oac_id" ] && [ "$own" != BucketOwnerPreferred ]; then
+        diff_ "files bucket $FILES_BUCKET: object ownership is $own; with an Origin Access Control it must be BucketOwnerPreferred (Enforced would reject public-read uploads)"
+    elif [ "$open" != true ] && [ -z "$oac_id" ]; then
+        diff_ "files bucket: not anonymously readable, but CloudFront has no Origin Access Control; files.unglue.it can't fetch from the bucket"
+    elif [ "$open" != true ] && [ "$cf_ok" != true ]; then
+        diff_ "files bucket: CloudFront signs its requests, but the bucket policy doesn't let this distribution read; files.unglue.it can't fetch from the bucket"
+    elif [ "$open" != true ] && [ "$is_public" != true ] && [ "$pab_ok" = true ] && [ "$has_deny" = true ]; then
+        note "files bucket $FILES_BUCKET: locked, but the policy has a Deny statement; check by hand that it doesn't block CloudFront"
+    elif [ "$open" != true ] && [ "$is_public" != true ] && [ "$pab_ok" = true ]; then
+        ok "files bucket $FILES_BUCKET: not anonymously readable except through CloudFront"
+    else
+        local where
+        if [ "$open" != true ]; then where="anonymous reads are blocked, but the policy still counts as public or the public-access block isn't fully set"
+        elif [ -z "$oac_id" ]; then where="anyone can read it directly; lock not started"
+        elif [ "$cf_ok" != true ]; then where="step 1 half done: CloudFront signs its requests, but the bucket policy has no statement for this distribution yet; add it before removing public read"
+        else where="step 1 done (CloudFront signs its requests); public read still on"; fi
+        if [ "$FILES_LOCK" = locked ]; then diff_ "files bucket $FILES_BUCKET: $where"
+        else note "files bucket $FILES_BUCKET: $where (planned; docs/AWS_SETUP.md section 5)"; fi
     fi
 }
 
