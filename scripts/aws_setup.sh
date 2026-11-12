@@ -71,7 +71,7 @@ FILES_HOST=files.unglue.it
 # planned: the bucket is still publicly readable; report its lock progress as NOTEs.
 # locked: only CloudFront may read it; anything else is a DIFF. Set after step 2 of
 # "Locking the bucket" in docs/AWS_SETUP.md section 5.
-FILES_LOCK=planned
+FILES_LOCK=locked   # since 2026-11-12 (#115)
 
 # --- plumbing ----------------------------------------------------------------
 # AWS: a failed call is a failure of the check (access denied, throttling, network),
