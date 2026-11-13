@@ -211,6 +211,22 @@ RewriteCond %{HTTP_USER_AGENT} !(GPTBot|ClaudeBot|Googlebot|bingbot|DotBot|meta-
 RewriteRule ^ - [F]
 # ---------------------------------------------------------------------------
 
+# --- Slashless-referer block (2026-11-13, security-private #43) -------------
+# On 11/13 the same botnet took the site down for about 90 minutes (9,405
+# addresses, at most 3 requests each, on /feedback/ and /accounts/ alone).
+# 10,631 of 20,000 requests sent the referer "https://unglue.it" exactly:
+# no path and no trailing slash. Standards-conforming browsers send an
+# origin-only referer with the slash ("https://unglue.it/", 607 in the same
+# sample), so the slashless form was a high-confidence crawler signature in
+# this incident; non-browser clients may also send it. Refused on every path.
+# An EMERGENCY STOPGAP, lossy by design: a script or extension that sends
+# the slashless form is refused too, and the bot gets past it by fixing its
+# referer. Remove it once bot protection sits in front of the site (#43).
+# Revert = delete this stanza and rerun --tags apache-config.
+RewriteCond %{HTTP_REFERER} ^https?://({{ [server_name, alt_server_name] | select | map('regex_escape') | join('|') }})$ [NC]
+RewriteRule ^ - [F]
+# ---------------------------------------------------------------------------
+
 # generated using https://mozilla.github.io/server-side-tls/ssl-config-generator/
 # intermediate mode
 # 2015.03.04   (with Apache v 2.2.22 and OpenSSL 1.0.1 and HSTS enabled)
