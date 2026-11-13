@@ -194,13 +194,17 @@ RewriteRule ^ - [F]
 # /pid/ request whose referer isn't one of ours is refused. Unfiltered
 # listings stay open to all; the named crawlers Eric chose to allow (July)
 # are exempt.
+# 2026-11-13: /free/ added. Once /bypub/ and /pid/ were refused, the same
+# crawler moved to /free/kw.<subject>/?pub_lang=<code> (22,511 of 26,359
+# /free/ requests in a 32-minute sample). Unfiltered /free/ pages, and
+# order_by alone, stay open.
 # An EMERGENCY STOPGAP, lossy by design: a reader opening a bookmarked or
 # shared filtered link from outside the site is refused too, and a bot can
 # get past it by faking the referer or a crawler name. Remove it once the
 # listing pages are cached for anonymous visitors or bot protection sits in
 # front of the site (#43, steps 2 and 3).
 # Revert = delete this stanza and rerun --tags apache-config.
-RewriteCond %{REQUEST_URI} ^/(bypub|pid)/ [NC]
+RewriteCond %{REQUEST_URI} ^/(bypub|pid|free)/ [NC]
 RewriteCond %{QUERY_STRING} (^|&)pub_lang= [NC]
 RewriteCond %{HTTP_REFERER} !^https?://({{ [server_name, alt_server_name] | select | map('regex_escape') | join('|') }})/ [NC]
 RewriteCond %{HTTP_USER_AGENT} !(GPTBot|ClaudeBot|Googlebot|bingbot|DotBot|meta-webindexer) [NC]
