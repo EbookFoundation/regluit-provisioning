@@ -54,6 +54,8 @@
   become: yes
   ansible.builtin.cron:
     name: "celery-log-truncate"
+    # standby has no celery log to truncate; the job would only make cron mail.
+    state: "{{ 'absent' if (standby_on | bool) else 'present' }}"
     minute: "15"
     hour: "3"
     weekday: "0"
@@ -103,6 +105,9 @@
   become: yes
   ansible.builtin.cron:
     name: "regluit-doab-harvest"
+    # standby removes the entry, so a replacement machine doesn't harvest while
+    # the live one does (DOAB's "wait" file is per machine).
+    state: "{{ 'absent' if (standby_on | bool) else 'present' }}"
     minute: "30"
     hour: "4"
     user: "{{ user_name }}"

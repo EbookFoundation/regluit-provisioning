@@ -44,6 +44,9 @@
   become: yes
   ansible.builtin.cron:
     name: "log-ship"
+    # standby removes the entry: a replacement machine would otherwise copy its
+    # own logs into the same S3 folder as the live machine's.
+    state: "{{ 'absent' if (standby_on | bool) else 'present' }}"
     minute: "30"
     hour: "1"
     user: "{{ user_name }}"

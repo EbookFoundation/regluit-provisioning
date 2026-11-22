@@ -26,7 +26,11 @@
 # cutover: points the environment's DNS name at the candidate, only with
 #   --yes AND --expect-current <the address it points at now>, and only if
 #   the candidate answers HTTPS for that name. Leaves both machines running.
-# Both refuse prod (#109: only after a test rebuild has worked end to end).
+# Production: #109's condition (a test rebuild that worked end to end) was met
+#   2026-11-22. create prod now refuses only until production's certificate can
+#   come by DNS-01 (prod:cert_dns below is "yes"), since a new production
+#   machine has no other way to get one. cutover still refuses prod: how
+#   production switches (move the Elastic IP, or change DNS) is not decided.
 # Shared security groups are only ever checked.
 
 set -u
@@ -345,16 +349,16 @@ check_files_lock() {
     fi
 }
 
-# --- create / cutover (one environment's machine; test only for now) ----------
+# --- create / cutover (one environment's machine; see the header for prod) ----
 # Tag on a machine and its Elastic IP while it is the not-yet-live replacement.
 CANDIDATE_TAG=unglueit:candidate
 UBUNTU_SSM=/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
 KEY_PAIR=production
 
 die() { echo "STOP: $*" >&2; exit 1; }
-refuse_prod() {
+refuse_prod_cutover() {
     [ "$1" = test ] && return 0
-    echo "REFUSED: '$2 $1' is not enabled. #109: production comes only after a test rebuild has worked end to end." >&2
+    echo "REFUSED: 'cutover $1' is not enabled. How production switches (move its Elastic IP, or change DNS) is not decided yet; see docs/AWS_SETUP.md, \"Rebuilding production\"." >&2
     exit 2
 }
 
@@ -411,7 +415,10 @@ validate_candidate() {   # validate_candidate <env> <candidates> <live-inst> <vp
 
 cmd_create() {
     local env=$1 yes=$2 want_ami=$3
-    refuse_prod "$env" create
+    if [ "$env" = prod ] && [ "$(expect prod cert_dns)" != yes ]; then
+        echo "REFUSED: 'create prod' waits for production's certificate to move to DNS-01 (docs/AWS_SETUP.md sections 6-7, \"Rebuilding production\" step 1). Without it a new production machine gets no certificate." >&2
+        exit 2
+    fi
     local live ip inst subnet vpc
     live=$(live_machine "$env") || exit 1
     read -r ip inst subnet vpc <<<"$live"
@@ -505,15 +512,26 @@ cmd_create() {
     echo
     echo "created: $existing with $new_ip (candidate; $(expect "$env" dns) still points at $ip)"
     echo "next:"
-    echo "  1. build it:  ansible-playbook -i hosts setup-$env.yml -e ansible_host=$new_ip"
-    echo "     (stop celery on one of the two machines while both point at the same database)"
-    echo "  2. check it:  curl --resolve $(expect "$env" dns):443:$new_ip https://$(expect "$env" dns)/  (and click around the same way)"
-    echo "  3. switch:    scripts/aws_setup.sh cutover $env --expect-current $ip"
+    if [ "$env" = prod ]; then
+        echo "  1. build it:  ansible-playbook -i hosts setup-prod.yml -e ansible_host=$new_ip -e standby=true"
+        echo "     (standby=true: no Celery, no DOAB harvest, no log copy while the live machine shares the database)"
+    else
+        echo "  1. build it:  ansible-playbook -i hosts setup-$env.yml -e ansible_host=$new_ip"
+        echo "     (stop celery on one of the two machines while both point at the same database)"
+    fi
+    if [ "$env" = prod ]; then
+        echo "  2. check it, read-only (it shares the live database and mail settings):"
+        echo "               curl --resolve unglue.it:443:$new_ip https://unglue.it/  and other pages; no logins, forms or purchases"
+        echo "  3. switch:    not scripted for production yet; see docs/AWS_SETUP.md, \"Rebuilding production\""
+    else
+        echo "  2. check it:  curl --resolve $(expect "$env" dns):443:$new_ip https://$(expect "$env" dns)/  (and click around the same way)"
+        echo "  3. switch:    scripts/aws_setup.sh cutover $env --expect-current $ip"
+    fi
 }
 
 cmd_cutover() {
     local env=$1 yes=$2 expect_current=$3
-    refuse_prod "$env" cutover
+    refuse_prod_cutover "$env"
     local dns; dns=$(expect "$env" dns)
     local live ip inst subnet vpc; live=$(live_machine "$env") || exit 1
     read -r ip inst subnet vpc <<<"$live"
@@ -559,7 +577,7 @@ cmd_cutover() {
 # --- main ----------------------------------------------------------------------------
 usage() {
     echo "usage: $0 check [prod|test|all]" >&2
-    echo "       $0 create test [--ami <id> --yes]" >&2
+    echo "       $0 create test|prod [--ami <id> --yes]   (prod: refused until its certificate uses DNS-01)" >&2
     echo "       $0 cutover test [--expect-current <ip> --yes]" >&2
     exit 2
 }

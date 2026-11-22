@@ -62,6 +62,16 @@
     daemon_reload: yes
     enabled: yes
     state: reloaded
+  when: not (standby_on | bool)
+
+- name: Keep celeryd stopped and disabled (standby)
+  become: yes
+  ansible.builtin.service:
+    name: celeryd
+    daemon_reload: yes
+    enabled: no
+    state: stopped
+  when: standby_on | bool
 
 # celerybeat_enabled: false keeps Beat stopped and disabled. For a staging box
 # whose database is a copy of production (real users' addresses): no scheduled
@@ -72,13 +82,13 @@
     name: celerybeat
     enabled: yes
     state: restarted
-  when: celerybeat_enabled | bool
+  when: (celerybeat_enabled | bool) and not (standby_on | bool)
 
-- name: Keep celerybeat stopped and disabled (celerybeat_enabled is false)
+- name: Keep celerybeat stopped and disabled (celerybeat_enabled is false, or standby)
   become: yes
   ansible.builtin.service:
     name: celerybeat
     daemon_reload: yes
     enabled: no
     state: stopped
-  when: not (celerybeat_enabled | bool)
+  when: not (celerybeat_enabled | bool) or (standby_on | bool)

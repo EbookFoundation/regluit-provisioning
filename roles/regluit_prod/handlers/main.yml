@@ -63,6 +63,8 @@
   ansible.builtin.service:
     name: celeryd
     state: restarted
+  # A restart starts a stopped service, so standby must skip it too.
+  when: not (standby_on | bool)
 
 - name: restart celerybeat
   become: yes
@@ -70,4 +72,4 @@
     name: celerybeat
     state: restarted
   # Otherwise a settings re-render would start Beat on a box that keeps it off.
-  when: celerybeat_enabled | bool
+  when: (celerybeat_enabled | bool) and not (standby_on | bool)
