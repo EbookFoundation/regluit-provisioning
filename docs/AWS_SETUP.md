@@ -212,7 +212,19 @@ The app sends as `unglueit@ebookfoundation.org`. Production sends through SES in
 5. **Switch:** `scripts/aws_setup.sh cutover test` shows the plan; `... --expect-current <the address test.unglue.it points at now> --yes` moves the DNS record in one atomic change (refused if the record changed meanwhile) and prints the command to switch back.
 6. **Afterwards:** stop the old machine, keep it 24 hours, then terminate it, release its address, and remove the candidate tag from the new machine and its address.
 
-Production: `create prod` and `cutover prod` are refused until a test rebuild has worked end to end (#109).
+Test was rebuilt this way for the first time on 2026-11-19 to 11-22 (`test-2026-11-11`). If your shell exports `AWS_PROFILE` for another account, the script uses it and refuses; put `AWS_PROFILE=<unglue.it profile>` in front of the command.
+
+## Rebuilding production (draft: neither create nor cutover is enabled yet)
+
+The same steps as test, with three differences. The database (`production-2024`) and S3 are not rebuilt; only the machine is replaced.
+
+1. **Before anything:** production's role needs the certificate permission (section 6), and production's renewal must move to DNS-01 (section 7). With DNS-01, both machines can try to renew while they overlap, and each writes and then deletes the same `_acme-challenge` record, so one renewal can fail. Renewal only starts in the last 30 days of a certificate, so check the expiry date before building, and renew by hand afterwards if one failed. Without that, a new production machine gets no certificate, so `create prod` refuses until `prod:cert_dns` in the script says `yes`. Two more pieces belong to that change: `group_vars/production` must let the playbooks manage the certificate (today `manage_certs: false` and no `certbot_manage`), and `check_role` must accept two challenge names if the certificate also covers `www.unglue.it` (today it expects exactly one).
+2. **Build in standby:** `ansible-playbook -i hosts setup-prod.yml -e ansible_host=<the candidate's address> -e standby=true`. Standby keeps Celery (worker and Beat) stopped and disabled and removes the DOAB harvest, log copy and Celery log-truncate crons, so the candidate doesn't harvest, run scheduled jobs or copy logs while both machines share the database. The choice is stored on the machine (`/etc/regluit-standby`): a later setup or deploy run without `-e standby` keeps it, so forgetting the flag can't bring the candidate live. The watchdogs still run and can send their alert mail, and a request that errors still mails the admins. Check it read-only, with `curl --resolve unglue.it:443:<candidate address>`: it uses the live database and mail settings, so no logins, forms or purchases: any page that sends mail (a password reset, a sign-up) sends real mail to a real person.
+3. **Switch:** `cutover prod` is still refused. How production switches is not decided: moving the Elastic IP (instant; DNS, mail and monitoring records stay as they are) or changing DNS like test. Until then, there is no scripted production switch. After the switch, run the setup with `-e standby=true` against the old machine, then right away with `-e standby=false` against the new one. Both on at once means Beat's scheduled jobs run twice; both off only pauses the harvest and the log copy, which is the safer of the two.
+
+   **Each machine has its own job queue.** Celery's queue is the Redis on the same machine (`tasks/redis.yml`), not shared. So a task the candidate's site queues while in standby waits in the candidate's Redis and runs as soon as standby is turned off; and a task still queued on the old machine when it goes into standby never runs there. With read-only checks the candidate should have queued nothing. To see, before turning standby off: `redis-cli llen celery` on the candidate (0 means empty).
+
+Before the switch, run the log copy once by hand on the old machine and check it (`scripts/check_log_ship.sh`); run it once more on the old machine after the switch, before stopping it. Keep the old machine stopped 7 days before terminating it.
 
 ## Keeping this file true
 

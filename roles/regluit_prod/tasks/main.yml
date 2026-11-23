@@ -26,6 +26,39 @@
       'production'. Check this host's group_vars and any -e overrides.
     quiet: true
 
+# standby: see defaults/main.yml. Runs before anything that can notify the
+# Celery handlers (certs.yml flushes handlers early), so they see standby_on.
+- name: Read the standby marker
+  tags: [always]
+  become: yes
+  ansible.builtin.stat:
+    path: /etc/regluit-standby
+  register: standby_marker
+
+- name: Decide standby for this run (-e standby wins; otherwise the marker)
+  tags: [always]
+  ansible.builtin.set_fact:
+    standby_on: "{{ (standby | bool) if standby is defined else standby_marker.stat.exists }}"
+
+- name: Record standby on the machine
+  tags: [always]
+  become: yes
+  ansible.builtin.copy:
+    dest: /etc/regluit-standby
+    content: "This machine is in standby (regluit-provisioning, docs/AWS_SETUP.md). Remove with a setup run using -e standby=false.\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: standby is defined and (standby | bool)
+
+- name: Clear standby on the machine
+  tags: [always]
+  become: yes
+  ansible.builtin.file:
+    path: /etc/regluit-standby
+    state: absent
+  when: standby is defined and not (standby | bool)
+
 - name: Install prod dependencies
   become: true
   apt:

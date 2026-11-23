@@ -54,6 +54,14 @@
     run_collectstatic: false
 
   tasks:
+    # A replacement machine in standby (docs/AWS_SETUP.md, "Rebuilding
+    # production") keeps Celery off; the marker file is written by setup.
+    - name: Read the standby marker
+      become: yes
+      ansible.builtin.stat:
+        path: /etc/regluit-standby
+      register: standby_marker
+
     - name: Show what is about to deploy
       debug:
         msg: >-
@@ -117,11 +125,13 @@
         name: apache2
         state: restarted
 
+    # Standby machines (marker file above) keep Celery off.
     - name: Restart celeryd
       become: yes
       service:
         name: celeryd
         state: restarted
+      when: not standby_marker.stat.exists
 
     # Disabling a service does not stop an explicit restart, so a code deploy
     # would otherwise start Beat again on a box that provisioning deliberately
@@ -133,7 +143,7 @@
       service:
         name: celerybeat
         state: restarted
-      when: celerybeat_enabled | default(true) | bool
+      when: (celerybeat_enabled | default(true) | bool) and not standby_marker.stat.exists
 
     - name: Report deployed revision
       debug:
